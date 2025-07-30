@@ -1,21 +1,17 @@
 {
   "manifest_version": 3,
   "name": "AutoMute",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Automatically mute ads during sports streams while preserving game audio",
   "permissions": [
     "activeTab",
     "tabCapture",
-    "storage",
     "tabs"
   ],
   "host_permissions": [
-  "https://automute-api-16091147188.us-central1.run.app/*",
-  "<all_urls>"
+    "https://automute-api-16091147188.us-central1.run.app/*",
+    "<all_urls>"
   ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://automute-api-16091147188.us-central1.run.app"
-  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -28,6 +24,9 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://automute-api-16091147188.us-central1.run.app"
   },
   "icons": {
     "16": "icons/icon16.png",
