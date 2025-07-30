@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoMute</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header with Audio Status -->
+    <header class="header">
+      <div class="logo">
+        <img src="../icons/icon48.png" alt="AutoMute" class="logo-icon">
+        <h1 class="title">AutoMute</h1>
+        <!-- Audio Status Indicator -->
+        <div class="audio-status" id="audioStatus">
+          <span id="audioStatusText">Unknown</span>
+        </div>
+      </div>
+      <div class="status-indicator" id="statusIndicator">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">Idle</span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Tab Selection Section -->
+      <section class="section" id="tabSelectionSection">
+        <h2 class="section-title">Select Tab to Monitor</h2>
+        <div class="tab-list" id="tabList">
+          <div class="loading" id="tabLoading">Loading tabs...</div>
+        </div>
+      </section>
+
+      <!-- Basic Status -->
+      <section class="section" id="statusSection">
+        <div class="status-info">
+          <div class="info-row">
+            <span class="info-label">Status:</span>
+            <span id="extensionStatus" class="info-value">Ready</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Backend:</span>
+            <span id="backendStatus" class="info-value">Not connected</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="version">AutoMute v1.0.0</div>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
