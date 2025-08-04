@@ -8,6 +8,7 @@ class AutoMuteDetector {
   constructor() {
     this.isMonitoring = false;
     this.currentTabId = null;
+    this.currentTabUrl = null;  // ADD: Track current tab URL for site detection
     this.screenshotInterval = null;
     this.lastClassification = null;
     this.screenshotCount = 0;
@@ -144,6 +145,7 @@ class AutoMuteDetector {
       // Set monitoring state
       this.isMonitoring = true;
       this.currentTabId = tabId;
+      this.currentTabUrl = tab.url;  // ADD: Store tab URL for site detection
       this.screenshotCount = 0;
       this.lastClassification = null;
       
@@ -155,18 +157,20 @@ class AutoMuteDetector {
       // Start capture loop
       this.scheduleNextCapture();
       
-      console.log(`✅ Monitoring started for tab ${tabId}: ${tab.title}`);
+      console.log(`✅ Monitoring started for tab ${tabId}: ${tab.title} (${tab.url})`);
       
       return {
         success: true,
         tabId: this.currentTabId,
         tabTitle: tab.title,
+        tabUrl: tab.url,  // ADD: Include URL in response
         interval: this.rateLimitState.currentInterval
       };
       
     } catch (error) {
       this.isMonitoring = false;
       this.currentTabId = null;
+      this.currentTabUrl = null;  // ADD: Reset URL
       console.error('Failed to start monitoring:', error);
       throw error;
     }
@@ -198,6 +202,7 @@ class AutoMuteDetector {
       const stoppedTabId = this.currentTabId;
       this.isMonitoring = false;
       this.currentTabId = null;
+      this.currentTabUrl = null;  // ADD: Reset URL
       this.lastClassification = null;
       
       // Clean up memory
@@ -233,7 +238,7 @@ class AutoMuteDetector {
   }
   
   /**
-   * Capture screenshot and analyze with AI
+   * ENHANCED captureAndAnalyze with step-by-step logging
    */
   async captureAndAnalyze() {
     try {
@@ -242,43 +247,91 @@ class AutoMuteDetector {
       }
       
       this.screenshotCount++;
-      console.log(`📸 Starting capture #${this.screenshotCount} for tab ${this.currentTabId}`);
+      console.log('');
+      console.log('='.repeat(80));
+      console.log(`🚀 STARTING CAPTURE #${this.screenshotCount} FOR TAB ${this.currentTabId}`);
+      console.log('='.repeat(80));
+      
+      // Get tab information
+      console.log('📋 STEP 1: Getting tab information...');
+      const tab = await this.getEnhancedTabInfo(this.currentTabId);
+      
+      const siteMetadata = {
+        hostname: this.extractHostname(tab.url),
+        referer: tab.url,
+        title: tab.title,
+        timestamp: Date.now()
+      };
+      
+      console.log('📋 Tab info:', {
+        id: tab.id,
+        title: tab.title,
+        url: tab.url,
+        audible: tab.audible,
+        muted: tab.mutedInfo?.muted
+      });
+      
+      console.log('🎯 Site metadata:', siteMetadata);
+      console.log(`🎯 Site category: ${this.getSiteCategory(siteMetadata.hostname)}`);
       
       // Capture screenshot
+      console.log('📸 STEP 2: Capturing screenshot...');
+      const screenshotStart = Date.now();
       const base64Image = await screenshotManager.captureTab(this.currentTabId);
+      const screenshotTime = Date.now() - screenshotStart;
       
       if (!base64Image) {
         throw new Error('Screenshot capture returned empty data');
       }
       
-      console.log(`📸 Screenshot captured, sending for classification...`);
+      console.log(`📸 Screenshot captured in ${screenshotTime}ms`);
+      console.log(`📸 Image size: ${Math.round(base64Image.length / 1024)}KB`);
       
       // Classify with AI
-      const classification = await apiClient.classifyImage(base64Image);
+      console.log('🤖 STEP 3: Sending for AI classification...');
+      const classificationStart = Date.now();
+      const classification = await apiClient.classifyImage(base64Image, siteMetadata);
+      const classificationTime = Date.now() - classificationStart;
       
-      // Handle successful classification
+      console.log(`🤖 Classification completed in ${classificationTime}ms`);
+      console.log('🤖 Raw classification result:', classification);
+      
+      // Handle classification result
+      console.log('🎵 STEP 4: Processing classification and audio decision...');
       await this.handleClassificationResult(classification);
       
       // Reset rate limiting on success
+      console.log('📈 STEP 5: Updating rate limiting (success)...');
       this.adjustRateLimit(false);
       
       // Schedule next capture
+      console.log('⏰ STEP 6: Scheduling next capture...');
       this.scheduleNextCapture();
       
+      const totalTime = Date.now() - screenshotStart;
+      console.log(`✅ CAPTURE #${this.screenshotCount} COMPLETED in ${totalTime}ms`);
+      console.log('='.repeat(80));
+      console.log('');
+      
     } catch (error) {
-      console.error('Capture and analyze failed:', error);
+      console.error('❌ CAPTURE AND ANALYZE FAILED:', error);
       
       // Handle rate limiting
       if (error.message.includes('rate_limit') || error.message.includes('429')) {
         console.warn('⚠️ API rate limit hit, backing off...');
         this.adjustRateLimit(true);
         
-        // Return fallback classification for rate limits
+        // Return fallback classification for rate limits with site context
+        const hostname = this.extractHostname(this.currentTabUrl);
+        const isYoutube = hostname && hostname.includes('youtube.com');
+        
+        console.log('🔄 Using fallback classification due to rate limit...');
         await this.handleClassificationResult({
-          classification: 'other',
+          classification: 'other',  // Safe default (unmute)
           confidence: 0,
           reasoning: 'Skipped due to API rate limit',
-          processing_time: 0
+          processing_time: 0,
+          site_category: isYoutube ? 'youtube' : 'general'
         });
       } else {
         this.adjustRateLimit(true);
@@ -290,17 +343,27 @@ class AutoMuteDetector {
   }
   
   /**
-   * Handle classification result and update audio
+   * ENHANCED handleClassificationResult with detailed logging
    */
   async handleClassificationResult(classification) {
     try {
-      console.log('Processing classification result:', classification);
+      console.log('🔍 DETAILED CLASSIFICATION ANALYSIS:');
+      console.log('Raw classification:', classification);
       
-      // Store classification
+      // Get site context
+      const hostname = this.extractHostname(this.currentTabUrl);
+      const siteCategory = this.getSiteCategory(hostname);
+      
+      console.log(`🌐 Site context: ${hostname} (category: ${siteCategory})`);
+      
+      // Store classification with enhanced metadata
       this.lastClassification = {
         ...classification,
         timestamp: new Date().toISOString(),
-        screenshotNumber: this.screenshotCount
+        screenshotNumber: this.screenshotCount,
+        hostname: hostname,
+        siteCategory: siteCategory,
+        tabUrl: this.currentTabUrl
       };
       
       // Add to history
@@ -309,86 +372,220 @@ class AutoMuteDetector {
         this.classificationHistory = this.classificationHistory.slice(0, this.maxHistorySize);
       }
       
-      // Determine audio action based on classification
-      const shouldMute = await this.shouldMuteForClassification(classification);
+      // ENHANCED: Determine audio action with detailed logging
+      const shouldMute = await this.shouldMuteForClassificationWithLogging(classification);
+      
+      console.log(`🎵 AUDIO DECISION: ${shouldMute.mute ? 'MUTE' : 'UNMUTE'}`);
+      console.log(`🎵 REASONING: ${shouldMute.reason}`);
       
       if (shouldMute.mute) {
+        console.log('🔇 EXECUTING MUTE...');
         await audioController.muteTab(this.currentTabId, { smooth: true });
-        console.log(`🔇 Tab muted: ${shouldMute.reason}`);
+        console.log('🔇 MUTE COMPLETED');
       } else {
+        console.log('🔊 EXECUTING UNMUTE...');
         await audioController.unmuteTab(this.currentTabId, { smooth: true });
-        console.log(`🔊 Tab unmuted: ${shouldMute.reason}`);
+        console.log('🔊 UNMUTE COMPLETED');
       }
       
+      // Verify audio state after action
+      const finalAudioState = await audioController.getTabAudioState(this.currentTabId);
+      console.log('🎵 FINAL AUDIO STATE:', finalAudioState);
+      
     } catch (error) {
-      console.error('Error handling classification result:', error);
+      console.error('❌ Error handling classification result:', error);
     }
   }
   
   /**
-   * Enhanced logic to determine if tab should be muted based on classification
-   * Only mutes VIDEO ads, not static webpage ads
+   * ENHANCED shouldMuteForClassification with detailed logging
    */
-  async shouldMuteForClassification(classification) {
-    const { classification: type, confidence, reasoning } = classification;
+  async shouldMuteForClassificationWithLogging(classification) {
+    const { classification: type, confidence, site_category } = classification;
     
-    // Get enhanced tab info
-    const tabInfo = await this.getEnhancedTabInfo(this.currentTabId);
-    const { audioInfo } = tabInfo;
+    console.log('🤔 AUDIO DECISION ANALYSIS:');
+    console.log(`   Classification: ${type}`);
+    console.log(`   Confidence: ${confidence}%`);
+    console.log(`   Site Category: ${site_category}`);
     
-    switch (type) {
-      case CONFIG.CLASSIFICATION_TYPES.AD:
-        if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
-          
-          // Multiple checks to ensure this is a VIDEO ad:
-          // 1. Tab currently has audible content
-          // 2. Tab is on a video streaming site
-          // 3. AI reasoning mentions video-related terms
-          const isVideoAd = (
-            audioInfo.hasAudio || 
-            audioInfo.isVideoSite || 
-            this.hasVideoIndicators(reasoning)
-          );
-          
-          if (isVideoAd) {
-            console.log(`🎥 Video ad detected - will mute (audio: ${audioInfo.hasAudio}, video site: ${audioInfo.isVideoSite})`);
-            return {
-              mute: true,
-              reason: `Video ad detected with ${confidence}% confidence`
-            };
-          } else {
-            console.log(`📄 Static ad detected - will NOT mute (audio: ${audioInfo.hasAudio}, video site: ${audioInfo.isVideoSite})`);
-            return {
-              mute: false,
-              reason: `Static webpage ad detected (${confidence}% confidence) - not muting`
-            };
-          }
-        }
-        break;
+    // Get site category
+    const siteCategory = site_category || this.getSiteCategory(this.extractHostname(this.currentTabUrl));
+    console.log(`   Determined Category: ${siteCategory}`);
+    
+    // YOUTUBE: Binary classification
+    if (siteCategory === 'youtube') {
+      console.log('📺 YOUTUBE LOGIC:');
+      console.log(`   Ad threshold: ${CONFIG.CONFIDENCE_THRESHOLD_AD}%`);
+      
+      if (type === 'ad') {
+        console.log(`   ✓ Ad detected with ${confidence}% confidence`);
         
-      case CONFIG.CLASSIFICATION_TYPES.GAME:
-        if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_GAME) {
+        if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
+          console.log(`   ✓ Confidence above threshold (${CONFIG.CONFIDENCE_THRESHOLD_AD}%) - WILL MUTE`);
+          return {
+            mute: true,
+            reason: `YouTube ad detected with ${confidence}% confidence (threshold: ${CONFIG.CONFIDENCE_THRESHOLD_AD}%)`
+          };
+        } else {
+          console.log(`   ✗ Confidence below threshold (${CONFIG.CONFIDENCE_THRESHOLD_AD}%) - WILL NOT MUTE`);
           return {
             mute: false,
-            reason: `Sports content detected with ${confidence}% confidence`
+            reason: `YouTube ad confidence too low: ${confidence}% < ${CONFIG.CONFIDENCE_THRESHOLD_AD}%`
           };
         }
-        break;
-        
-      case CONFIG.CLASSIFICATION_TYPES.OTHER:
-        const currentAudioState = await audioController.getTabAudioState(this.currentTabId);
+      } else {
+        console.log(`   ✓ Non-ad content (${type}) - WILL UNMUTE`);
         return {
-          mute: currentAudioState.managedByExtension ? currentAudioState.muted : false,
-          reason: `Other content detected, maintaining current state`
+          mute: false,
+          reason: `YouTube content (${type}) detected with ${confidence}% confidence - unmuting all non-ad content`
         };
+      }
     }
     
-    // Default: maintain current state
-    const currentAudioState = await audioController.getTabAudioState(this.currentTabId);
+    // SPORTS STREAMING SITES: 3-way classification
+    if (siteCategory === 'sportsStreaming') {
+      console.log('🏈 SPORTS STREAMING LOGIC:');
+      
+      switch (type) {
+        case 'ad':
+          console.log(`   Ad detected with ${confidence}% confidence (threshold: ${CONFIG.CONFIDENCE_THRESHOLD_AD}%)`);
+          if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
+            console.log('   ✓ Will mute streaming ad');
+            return {
+              mute: true,
+              reason: `Streaming ad detected with ${confidence}% confidence`
+            };
+          } else {
+            console.log('   ✗ Confidence too low for ad muting');
+            return {
+              mute: false,
+              reason: `Streaming ad confidence too low: ${confidence}% < ${CONFIG.CONFIDENCE_THRESHOLD_AD}%`
+            };
+          }
+          
+        case 'game':
+          console.log(`   Sports content detected with ${confidence}% confidence (threshold: ${CONFIG.CONFIDENCE_THRESHOLD_GAME}%)`);
+          if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_GAME) {
+            console.log('   ✓ Will unmute sports content');
+            return {
+              mute: false,
+              reason: `Sports content detected with ${confidence}% confidence`
+            };
+          }
+          break;
+          
+        case 'other':
+          console.log('   Other content on sports site - maintaining state');
+          const currentAudioState = await audioController.getTabAudioState(this.currentTabId);
+          return {
+            mute: currentAudioState.managedByExtension ? currentAudioState.muted : false,
+            reason: `Non-sports content on streaming site, maintaining current state`
+          };
+      }
+    }
+    
+    // GENERAL SITES: Enhanced video ad detection
+    console.log('🌐 GENERAL SITE LOGIC:');
+    
+    if (type === 'ad' && confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
+      console.log('   Potential ad detected - checking if video ad...');
+      
+      // Get enhanced tab info
+      const tabInfo = await this.getEnhancedTabInfo(this.currentTabId);
+      const { audioInfo } = tabInfo;
+      
+      console.log('   Tab audio info:', audioInfo);
+      
+      // Check if this is a video ad
+      const isVideoAd = (
+        audioInfo.hasAudio || 
+        audioInfo.isVideoSite || 
+        this.hasVideoIndicators(classification.reasoning)
+      );
+      
+      console.log(`   Is video ad: ${isVideoAd}`);
+      console.log(`   Has audio: ${audioInfo.hasAudio}`);
+      console.log(`   Is video site: ${audioInfo.isVideoSite}`);
+      console.log(`   Has video indicators: ${this.hasVideoIndicators(classification.reasoning)}`);
+      
+      if (isVideoAd) {
+        console.log('   ✓ Video ad confirmed - WILL MUTE');
+        return {
+          mute: true,
+          reason: `Video ad detected with ${confidence}% confidence`
+        };
+      } else {
+        console.log('   ✗ Static ad detected - WILL NOT MUTE');
+        return {
+          mute: false,
+          reason: `Static webpage ad detected (${confidence}% confidence) - not muting`
+        };
+      }
+    }
+    
+    // Default: don't mute
+    console.log(`   ✗ No mute action: ${type} with ${confidence}% confidence`);
     return {
-      mute: currentAudioState.managedByExtension ? currentAudioState.muted : false,
-      reason: `Low confidence (${confidence}%), maintaining current state`
+      mute: false,
+      reason: `No mute condition met: ${type} (${confidence}%)`
     };
+  }
+  
+  /**
+   * ADD: Extract hostname from URL
+   */
+  extractHostname(url) {
+    if (!url) return '';
+    
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname.toLowerCase();
+    } catch (error) {
+      console.warn('Failed to extract hostname from URL:', url);
+      return '';
+    }
+  }
+  
+  /**
+   * ADD: Get site category for classification logic
+   */
+  getSiteCategory(hostname) {
+    if (!hostname) return 'general';
+    
+    // YouTube sites
+    if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
+      return 'youtube';
+    }
+    
+    // Sports streaming sites
+    const sportsStreamingSites = [
+      'espn.com', 'espn.go.com', 'watchespn.com',
+      'fox.com', 'foxsports.com', 'fs1.com', 'fs2.com',
+      'cbs.com', 'cbssports.com', 'cbssportsnetwork.com',
+      'peacocktv.com', 'peacock.com',
+      'hulu.com', 'hulu.tv',
+      'amazon.com', 'primevideo.com',
+      'nfl.com', 'nflnetwork.com', 'nflredzone.com',
+      'nba.com', 'nba.tv',
+      'mlb.com', 'mlb.tv',
+      'nhl.com', 'nhl.tv',
+      'paramount.com', 'paramountplus.com',
+      'fubo.tv', 'fubotv.com',
+      'sling.com', 'slingtv.com',
+      'directv.com', 'stream.directv.com',
+      'youtube.tv', 'tv.youtube.com',
+      'streameast', 'buffstreams', 'crackstreams', 'sportsurge',
+      'nflbite.com', 'nbastreams', 'mlbstreams', 'nhlstreams',
+      'footybite.com', 'soccer-streams.net', 'methstreams',
+      'givemenflstreams.com', 'topstreams', 'vipleague',
+      'firstrowsports', 'livetvsx', 'strikeout', 'bosscast'
+    ];
+    
+    if (sportsStreamingSites.some(site => hostname.includes(site))) {
+      return 'sportsStreaming';
+    }
+    
+    return 'general';
   }
   
   /**
@@ -528,6 +725,9 @@ class AutoMuteDetector {
     if (tabId === this.currentTabId && changeInfo.url) {
       console.log(`Monitored tab navigated to: ${changeInfo.url}`);
       
+      // UPDATE: Update stored URL for site detection
+      this.currentTabUrl = changeInfo.url;
+      
       // Check if new URL is monitorable
       if (this.isTabMonitorable(tab)) {
         console.log('New URL is monitorable, continuing monitoring');
@@ -574,7 +774,8 @@ class AutoMuteDetector {
             audible: tab.audible || false,
             status: tab.status,
             windowId: tab.windowId,
-            index: tab.index
+            index: tab.index,
+            siteCategory: this.getSiteCategory(this.extractHostname(tab.url))  // ADD: Include site category
           }))
           .sort((a, b) => {
             if (a.windowId !== b.windowId) {
@@ -599,6 +800,8 @@ class AutoMuteDetector {
     return {
       isMonitoring: this.isMonitoring,
       currentTabId: this.currentTabId,
+      currentTabUrl: this.currentTabUrl,  // ADD: Include current URL
+      currentSiteCategory: this.getSiteCategory(this.extractHostname(this.currentTabUrl)),  // ADD: Include site category
       screenshotCount: this.screenshotCount,
       lastClassification: this.lastClassification,
       rateLimitState: this.rateLimitState,

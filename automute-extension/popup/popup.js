@@ -43,6 +43,9 @@ class PopupController {
       // Add start/stop button to the popup
       this.createStartStopButton();
       
+      // NEW: Create debugging interface
+      this.createDebugInterface();
+      
       // Test connections
       await this.testBackgroundConnection();
       await this.testBackendConnection();
@@ -53,8 +56,11 @@ class PopupController {
       // Load tabs
       await this.loadTabs();
       
+      // NEW: Set up auto-refresh for debugging (every 2 seconds when monitoring)
+      this.startDebugRefresh();
+      
       this.isInitialized = true;
-      console.log('AutoMute popup initialized successfully');
+      console.log('AutoMute popup initialized successfully with debugging');
       
     } catch (error) {
       console.error('Failed to initialize popup:', error);
@@ -179,12 +185,21 @@ class PopupController {
   }
   
   /**
-   * Update UI based on current status
+   * ENHANCED updateUI method with debugging information
    */
   updateUI() {
     if (!this.currentStatus) return;
     
-    const { isMonitoring, currentTabId, screenshotCount, lastClassification, audioState } = this.currentStatus;
+    const { 
+      isMonitoring, 
+      currentTabId, 
+      currentTabUrl,
+      currentSiteCategory,
+      screenshotCount, 
+      lastClassification, 
+      audioState,
+      rateLimitState 
+    } = this.currentStatus;
     
     // Update status indicator
     if (isMonitoring) {
@@ -202,6 +217,10 @@ class PopupController {
         this.elements.currentTabInfo.style.display = 'block';
         this.updateCurrentTabDisplay(currentTabId);
       }
+      
+      // NEW: Show debugging information
+      this.updateDebugInfo(currentTabUrl, currentSiteCategory, screenshotCount, lastClassification, rateLimitState);
+      
     } else {
       this.elements.statusDot.className = 'status-dot idle';
       this.elements.statusText.textContent = 'Idle';
@@ -215,6 +234,9 @@ class PopupController {
       if (this.elements.currentTabInfo) {
         this.elements.currentTabInfo.style.display = 'none';
       }
+      
+      // Hide debug info when not monitoring
+      this.hideDebugInfo();
     }
     
     // Update audio status indicator
@@ -225,7 +247,7 @@ class PopupController {
       this.elements.startStopBtn.disabled = false;
     }
     
-    console.log('UI updated:', { isMonitoring, screenshotCount, lastClassification });
+    console.log('UI updated with debugging info:', { isMonitoring, screenshotCount, lastClassification });
   }
   
   /**
@@ -552,10 +574,360 @@ class PopupController {
   }
   
   /**
-   * Show error message
+   * NEW: Create debugging interface section
    */
-  showError(message) {
-    console.error('Popup error:', message);
+  createDebugInterface() {
+    // Create debug section HTML
+    const debugHtml = `
+      <div id="debugSection" style="
+        padding: 12px 16px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #e8eaed;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+        display: none;
+      ">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h3 style="font-size: 12px; font-weight: 600; color: #202124; margin: 0;">🐛 Debug Info</h3>
+          <button id="toggleDebug" style="
+            background: none;
+            border: 1px solid #dadce0;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 10px;
+            cursor: pointer;
+            color: #5f6368;
+          ">Hide</button>
+        </div>
+        
+        <!-- Site Information -->
+        <div style="margin-bottom: 8px;">
+          <div style="color: #1967d2; font-weight: bold;">Site Info:</div>
+          <div id="debugSiteUrl" style="color: #5f6368; word-break: break-all;">-</div>
+          <div id="debugSiteCategory" style="color: #34a853; font-weight: bold;">-</div>
+        </div>
+        
+        <!-- Current Classification -->
+        <div style="margin-bottom: 8px;">
+          <div style="color: #1967d2; font-weight: bold;">Last Classification:</div>
+          <div id="debugClassification" style="color: #ea4335; font-weight: bold; font-size: 13px;">-</div>
+          <div id="debugConfidence" style="color: #fbbc04; font-weight: bold;">-</div>
+          <div id="debugReasoning" style="color: #5f6368; margin-top: 2px;">-</div>
+        </div>
+        
+        <!-- Performance Info -->
+        <div style="margin-bottom: 8px;">
+          <div style="color: #1967d2; font-weight: bold;">Performance:</div>
+          <div id="debugProcessingTime" style="color: #5f6368;">-</div>
+          <div id="debugTokensUsed" style="color: #5f6368;">-</div>
+          <div id="debugScreenshotCount" style="color: #5f6368;">-</div>
+        </div>
+        
+        <!-- Audio State -->
+        <div style="margin-bottom: 8px;">
+          <div style="color: #1967d2; font-weight: bold;">Audio Decision:</div>
+          <div id="debugAudioAction" style="color: #34a853; font-weight: bold;">-</div>
+          <div id="debugAudioReason" style="color: #5f6368; font-size: 10px;">-</div>
+        </div>
+        
+        <!-- Rate Limiting -->
+        <div style="margin-bottom: 8px;">
+          <div style="color: #1967d2; font-weight: bold;">Rate Limiting:</div>
+          <div id="debugRateLimit" style="color: #5f6368;">-</div>
+        </div>
+        
+        <!-- Timestamp -->
+        <div style="margin-bottom: 8px;">
+          <div style="color: #1967d2; font-weight: bold;">Last Update:</div>
+          <div id="debugTimestamp" style="color: #5f6368;">-</div>
+        </div>
+        
+        <!-- Export Debug Data -->
+        <button id="exportDebug" style="
+          background: #1967d2;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          padding: 4px 8px;
+          font-size: 10px;
+          cursor: pointer;
+          margin-top: 8px;
+        ">Export Debug Data</button>
+      </div>
+    `;
+    
+    // Insert debug section after the header
+    const header = document.querySelector('.header');
+    if (header && header.parentNode) {
+      const debugDiv = document.createElement('div');
+      debugDiv.innerHTML = debugHtml;
+      header.parentNode.insertBefore(debugDiv, header.nextSibling);
+      
+      // Store references
+      this.elements.debugSection = document.getElementById('debugSection');
+      this.elements.toggleDebug = document.getElementById('toggleDebug');
+      this.elements.debugSiteUrl = document.getElementById('debugSiteUrl');
+      this.elements.debugSiteCategory = document.getElementById('debugSiteCategory');
+      this.elements.debugClassification = document.getElementById('debugClassification');
+      this.elements.debugConfidence = document.getElementById('debugConfidence');
+      this.elements.debugReasoning = document.getElementById('debugReasoning');
+      this.elements.debugProcessingTime = document.getElementById('debugProcessingTime');
+      this.elements.debugTokensUsed = document.getElementById('debugTokensUsed');
+      this.elements.debugScreenshotCount = document.getElementById('debugScreenshotCount');
+      this.elements.debugAudioAction = document.getElementById('debugAudioAction');
+      this.elements.debugAudioReason = document.getElementById('debugAudioReason');
+      this.elements.debugRateLimit = document.getElementById('debugRateLimit');
+      this.elements.debugTimestamp = document.getElementById('debugTimestamp');
+      this.elements.exportDebug = document.getElementById('exportDebug');
+      
+      // Add toggle functionality
+      this.elements.toggleDebug.addEventListener('click', () => {
+        const isVisible = this.elements.debugSection.style.display !== 'none';
+        if (isVisible) {
+          this.elements.debugSection.style.display = 'none';
+          this.elements.toggleDebug.textContent = 'Show Debug';
+        } else {
+          this.elements.debugSection.style.display = 'block';
+          this.elements.toggleDebug.textContent = 'Hide Debug';
+        }
+      });
+      
+      // Add export functionality
+      this.elements.exportDebug.addEventListener('click', () => {
+        this.exportDebugData();
+      });
+    }
+  }
+
+  /**
+   * NEW: Update debugging information display
+   */
+  updateDebugInfo(currentTabUrl, currentSiteCategory, screenshotCount, lastClassification, rateLimitState) {
+    if (!this.elements.debugSection) {
+      this.createDebugInterface();
+    }
+    
+    // Show debug section when monitoring
+    this.elements.debugSection.style.display = 'block';
+    
+    // Update site information
+    if (this.elements.debugSiteUrl) {
+      this.elements.debugSiteUrl.textContent = currentTabUrl || 'Unknown URL';
+    }
+    
+    if (this.elements.debugSiteCategory) {
+      const categoryText = currentSiteCategory || 'general';
+      const categoryColor = {
+        'youtube': '#ff0000',
+        'sportsStreaming': '#34a853', 
+        'general': '#5f6368'
+      }[categoryText] || '#5f6368';
+      
+      this.elements.debugSiteCategory.textContent = `Category: ${categoryText}`;
+      this.elements.debugSiteCategory.style.color = categoryColor;
+    }
+    
+    // Update classification information
+    if (lastClassification) {
+      if (this.elements.debugClassification) {
+        const classText = lastClassification.classification.toUpperCase();
+        const classColor = {
+          'AD': '#ea4335',
+          'GAME': '#34a853',
+          'OTHER': '#1967d2'
+        }[classText] || '#5f6368';
+        
+        this.elements.debugClassification.textContent = classText;
+        this.elements.debugClassification.style.color = classColor;
+      }
+      
+      if (this.elements.debugConfidence) {
+        const confidence = lastClassification.confidence || 0;
+        const confColor = confidence >= 75 ? '#34a853' : confidence >= 50 ? '#fbbc04' : '#ea4335';
+        this.elements.debugConfidence.textContent = `Confidence: ${confidence}%`;
+        this.elements.debugConfidence.style.color = confColor;
+      }
+      
+      if (this.elements.debugReasoning) {
+        this.elements.debugReasoning.textContent = lastClassification.reasoning || 'No reasoning provided';
+      }
+      
+      if (this.elements.debugProcessingTime) {
+        const procTime = lastClassification.processing_time || 0;
+        this.elements.debugProcessingTime.textContent = `Processing: ${procTime.toFixed(2)}s`;
+      }
+      
+      if (this.elements.debugTokensUsed) {
+        const tokens = lastClassification.tokens_used || 'Unknown';
+        this.elements.debugTokensUsed.textContent = `Tokens: ${tokens}`;
+      }
+      
+      // Audio decision information
+      if (this.elements.debugAudioAction) {
+        const shouldMute = this.determineAudioAction(lastClassification, currentSiteCategory);
+        this.elements.debugAudioAction.textContent = shouldMute.mute ? '🔇 MUTED' : '🔊 UNMUTED';
+        this.elements.debugAudioAction.style.color = shouldMute.mute ? '#ea4335' : '#34a853';
+      }
+      
+      if (this.elements.debugAudioReason) {
+        const shouldMute = this.determineAudioAction(lastClassification, currentSiteCategory);
+        this.elements.debugAudioReason.textContent = shouldMute.reason;
+      }
+      
+      if (this.elements.debugTimestamp) {
+        const timestamp = new Date(lastClassification.timestamp).toLocaleTimeString();
+        this.elements.debugTimestamp.textContent = timestamp;
+      }
+    } else {
+      // No classification yet
+      if (this.elements.debugClassification) {
+        this.elements.debugClassification.textContent = 'WAITING...';
+        this.elements.debugClassification.style.color = '#5f6368';
+      }
+    }
+    
+    // Update screenshot count
+    if (this.elements.debugScreenshotCount) {
+      this.elements.debugScreenshotCount.textContent = `Screenshots: ${screenshotCount}`;
+    }
+    
+    // Update rate limiting info
+    if (this.elements.debugRateLimit && rateLimitState) {
+      const backoff = rateLimitState.backoffMultiplier || 1;
+      const failures = rateLimitState.consecutiveFailures || 0;
+      this.elements.debugRateLimit.textContent = `Backoff: ${backoff}x (${failures} failures)`;
+      this.elements.debugRateLimit.style.color = backoff > 1 ? '#ea4335' : '#34a853';
+    }
+  }
+
+  /**
+   * NEW: Determine what audio action should be taken (for debugging display)
+   */
+  determineAudioAction(classification, siteCategory) {
+    const { classification: type, confidence } = classification;
+    
+    // YouTube: Binary logic
+    if (siteCategory === 'youtube') {
+      if (type === 'ad' && confidence >= 75) {
+        return {
+          mute: true,
+          reason: `YouTube ad detected (${confidence}%)`
+        };
+      } else {
+        return {
+          mute: false,
+          reason: `YouTube content: ${type} (${confidence}%)`
+        };
+      }
+    }
+    
+    // Sports streaming: 3-way logic
+    if (siteCategory === 'sportsStreaming') {
+      switch (type) {
+        case 'ad':
+          return confidence >= 75 ? 
+            { mute: true, reason: `Streaming ad (${confidence}%)` } :
+            { mute: false, reason: `Low confidence ad (${confidence}%)` };
+        case 'game':
+          return confidence >= 70 ?
+            { mute: false, reason: `Sports content (${confidence}%)` } :
+            { mute: false, reason: `Low confidence game (${confidence}%)` };
+        case 'other':
+          return { mute: false, reason: `Other content (${confidence}%)` };
+      }
+    }
+    
+    // General sites: Video ad detection
+    if (type === 'ad' && confidence >= 75) {
+      return { mute: true, reason: `General site ad (${confidence}%)` };
+    }
+    
+    return { mute: false, reason: `No mute action (${type}, ${confidence}%)` };
+  }
+
+  /**
+   * NEW: Hide debugging information
+   */
+  hideDebugInfo() {
+    if (this.elements.debugSection) {
+      this.elements.debugSection.style.display = 'none';
+    }
+  }
+
+  /**
+   * NEW: Auto-refresh debugging information
+   */
+  startDebugRefresh() {
+    setInterval(async () => {
+      if (this.currentStatus && this.currentStatus.isMonitoring) {
+        try {
+          await this.updateStatus();
+        } catch (error) {
+          console.error('Failed to refresh debug info:', error);
+        }
+      }
+    }, 2000); // Refresh every 2 seconds when monitoring
+  }
+
+  /**
+   * NEW: Export debug data for troubleshooting
+   */
+  async exportDebugData() {
+    try {
+      const status = await this.sendMessage({ type: 'GET_STATUS' });
+      const history = await this.sendMessage({ type: 'GET_HISTORY' });
+      
+      const debugData = {
+        timestamp: new Date().toISOString(),
+        status: status.data,
+        classificationHistory: history.data,
+        browserInfo: {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          language: navigator.language
+        }
+      };
+      
+      // Copy to clipboard
+      const dataString = JSON.stringify(debugData, null, 2);
+      await navigator.clipboard.writeText(dataString);
+      
+      console.log('Debug data copied to clipboard:', debugData);
+      alert('Debug data copied to clipboard!');
+      
+    } catch (error) {
+      console.error('Failed to export debug data:', error);
+    }
+  }
+
+  /**
+   * NEW: Enhanced error display for debugging
+   */
+  showError(message, details = null) {
+    console.error('Popup error:', message, details);
+    
+    // Create error display
+    const errorHtml = `
+      <div style="
+        padding: 12px 16px;
+        background: #fce8e6;
+        border: 1px solid #ea4335;
+        border-radius: 4px;
+        margin: 16px;
+        color: #d93025;
+        font-size: 12px;
+      ">
+        <div style="font-weight: bold; margin-bottom: 4px;">⚠️ Error</div>
+        <div>${message}</div>
+        ${details ? `<div style="margin-top: 4px; font-family: monospace; font-size: 10px; color: #5f6368;">${details}</div>` : ''}
+      </div>
+    `;
+    
+    // Show error in main content
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+      mainContent.innerHTML = errorHtml;
+    }
   }
 }
 

@@ -16,10 +16,10 @@ class ApiClient {
   /**
    * Classify image using the backend API
    * @param {string} base64Image - Base64 encoded image data
-   * @param {Object} options - Additional options
+   * @param {Object} siteMetadata - Site metadata for prompt optimization
    * @returns {Promise<Object>} Classification result
    */
-  async classifyImage(base64Image, options = {}) {
+  async classifyImage(base64Image, siteMetadata = {}) {  // CHANGED: Added siteMetadata parameter
     try {
       console.log('Starting image classification via API');
       
@@ -28,11 +28,16 @@ class ApiClient {
         throw new Error('Invalid image data provided');
       }
       
-      // Prepare request payload
+      // Log site context for debugging
+      if (siteMetadata.hostname) {
+        console.log(`Classifying image for site: ${siteMetadata.hostname}`);
+      }
+      
+      // Prepare request payload with metadata
       const payload = {
         image: base64Image,
-        timestamp: new Date().toISOString(),
-        ...options
+        metadata: siteMetadata,  // CHANGED: Include site metadata
+        timestamp: new Date().toISOString()
       };
       
       // Make API request with retries
@@ -47,7 +52,9 @@ class ApiClient {
       // Validate response structure
       this.validateClassificationResponse(result);
       
-      console.log(`Classification completed: ${result.classification} (${result.confidence}%)`);
+      // Enhanced logging with site context
+      const siteInfo = result.site_category ? ` (${result.site_category} site)` : '';
+      console.log(`Classification completed: ${result.classification} (${result.confidence}%)${siteInfo}`);
       
       return result;
       
@@ -152,8 +159,11 @@ class ApiClient {
     
     const { classification, confidence } = response;
     
+    // Update validation for new binary YouTube classification
+    const validClassifications = ['ad', 'game', 'other'];  // CHANGED: Keep all three for backward compatibility
+    
     // Validate classification
-    if (!classification || !Object.values(CONFIG.CLASSIFICATION_TYPES).includes(classification)) {
+    if (!classification || !validClassifications.includes(classification)) {
       throw new Error(`Invalid classification: ${classification}`);
     }
     
