@@ -1,194 +1,36 @@
 /* Reset and base styles */
 * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-  
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 14px;
-    line-height: 1.4;
-    color: #202124;
-    background: #ffffff;
-    width: 400px;
-    min-height: 300px;
-  }
-  
-  /* Container */
-  .container {
-    display: flex;
-    flex-direction: column;
-    min-height: 300px;
-  }
-  
-  /* Header */
-  .header {
-    padding: 16px;
-    border-bottom: 1px solid #e8eaed;
-    background: #f8f9fa;
-  }
-  
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-  
-  .logo-icon {
-    width: 24px;
-    height: 24px;
-  }
-  
-  .title {
-    font-size: 16px;
-    font-weight: 500;
-    color: #202124;
-  }
-  
-  .status-indicator {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #9aa0a6;
-    transition: background-color 0.2s ease;
-  }
-  
-  .status-dot.idle {
-    background: #9aa0a6;
-  }
-  
-  .status-dot.monitoring {
-    background: #34a853;
-    animation: pulse 2s infinite;
-  }
-  
-  .status-dot.processing {
-    background: #fbbc04;
-    animation: pulse 1s infinite;
-  }
-  
-  .status-dot.error {
-    background: #ea4335;
-  }
-  
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-  
-  .status-text {
-    font-size: 12px;
-    color: #5f6368;
-    font-weight: 500;
-  }
-  
-  /* Main content */
-  .main-content {
-    flex: 1;
-    padding: 0;
-  }
-  
-  .section {
-    padding: 16px;
-    border-bottom: 1px solid #e8eaed;
-  }
-  
-  .section:last-child {
-    border-bottom: none;
-  }
-  
-  .section-title {
-    font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 12px;
-    color: #202124;
-  }
-  
-  /* Tab list */
-  .tab-list {
-    max-height: 200px;
-    overflow-y: auto;
-  }
-  
-  .loading {
-    text-align: center;
-    color: #5f6368;
-    font-style: italic;
-    padding: 20px;
-  }
-  
-  /* Status info */
-  .status-info {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  
-  .info-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  
-  .info-label {
-    font-size: 12px;
-    color: #5f6368;
-    font-weight: 500;
-  }
-  
-  .info-value {
-    font-size: 12px;
-    color: #202124;
-    font-weight: 500;
-  }
-  
-  .info-value.connected {
-    color: #34a853;
-  }
-  
-  .info-value.error {
-    color: #ea4335;
-  }
-  
-  /* Footer */
-  .footer {
-    padding: 12px 16px;
-    border-top: 1px solid #e8eaed;
-    background: #f8f9fa;
-    text-align: center;
-  }
-  
-  .version {
-    font-size: 10px;
-    color: #9aa0a6;
-  }
-  
-  /* Scrollbar styling */
-  ::-webkit-scrollbar {
-    width: 6px;
-  }
-  
-  ::-webkit-scrollbar-track {
-    background: #f1f3f4;
-  }
-  
-  ::-webkit-scrollbar-thumb {
-    background: #dadce0;
-    border-radius: 3px;
-  }
-  
-  ::-webkit-scrollbar-thumb:hover {
-    background: #9aa0a6;
-  }
-  /* Audio Status Indicator */
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #202124;
+  background: #ffffff;
+  width: 450px; /* Slightly wider to accommodate Spotify controls */
+  min-height: 400px; /* Taller to accommodate new sections */
+  max-height: 700px; /* Prevent excessive height */
+  overflow-y: auto;
+}
+
+/* Container */
+.container {
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+}
+
+/* Header */
+.header {
+  padding: 16px;
+  border-bottom: 1px solid #e8eaed;
+  background: #f8f9fa;
+}
+
 .logo {
   display: flex;
   align-items: center;
@@ -200,8 +42,60 @@
 
 .logo .title {
   flex: 1;
+  font-size: 16px;
+  font-weight: 500;
+  color: #202124;
 }
 
+.logo-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+  transition: background-color 0.2s ease;
+}
+
+.status-dot.idle {
+  background: #9aa0a6;
+}
+
+.status-dot.monitoring {
+  background: #34a853;
+  animation: pulse 2s infinite;
+}
+
+.status-dot.processing {
+  background: #fbbc04;
+  animation: pulse 1s infinite;
+}
+
+.status-dot.error {
+  background: #ea4335;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-text {
+  font-size: 12px;
+  color: #5f6368;
+  font-weight: 500;
+}
+
+/* Audio Status Indicator */
 .audio-status {
   padding: 2px 8px;
   border-radius: 12px;
@@ -212,6 +106,7 @@
   border: 1px solid;
   min-width: 70px;
   text-align: center;
+  transition: all 0.2s ease;
 }
 
 .audio-status.muted {
@@ -230,4 +125,451 @@
   background: #f1f3f4;
   color: #5f6368;
   border-color: #9aa0a6;
+}
+
+/* Main content */
+.main-content {
+  flex: 1;
+  padding: 0;
+}
+
+.section {
+  padding: 16px;
+  border-bottom: 1px solid #e8eaed;
+}
+
+.section:last-child {
+  border-bottom: none;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 12px;
+  color: #202124;
+}
+
+/* Tab list enhancements */
+.tab-list {
+  max-height: 250px; /* Increased for better viewing */
+  overflow-y: auto;
+  padding-right: 4px; /* Space for scrollbar */
+}
+
+.loading {
+  text-align: center;
+  color: #5f6368;
+  font-style: italic;
+  padding: 20px;
+  font-size: 12px;
+}
+
+.no-tabs {
+  text-align: center;
+  color: #5f6368;
+  font-style: italic;
+  padding: 20px;
+  font-size: 12px;
+}
+
+/* Enhanced tab items */
+.tab-item {
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.tab-item:hover {
+  transform: translateX(2px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.window-separator {
+  font-size: 11px;
+  color: #5f6368;
+  padding: 4px 8px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e8eaed;
+  font-weight: 500;
+  border-radius: 4px 4px 0 0;
+  margin-bottom: 2px;
+}
+
+/* Site category styling */
+.tab-item.site-youtube {
+  border-left: 3px solid #ff0000;
+}
+
+.tab-item.site-sportsStreaming {
+  border-left: 3px solid #34a853;
+}
+
+.tab-item.site-general {
+  border-left: 3px solid #9aa0a6;
+}
+
+/* Spotify Section Styling */
+#spotifySection {
+  transition: all 0.3s ease;
+}
+
+#spotifySection .spotify-user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#spotifySection .spotify-connect-dot {
+  width: 8px;
+  height: 8px;
+  background: #1db954;
+  border-radius: 50%;
+  animation: spotifyPulse 2s infinite;
+}
+
+@keyframes spotifyPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+/* Enhanced buttons */
+button {
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Spotify Login Button */
+#spotifyLoginBtn:hover {
+  background: #1ed760 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(29, 185, 84, 0.3);
+}
+
+/* Music Controls */
+#musicControls {
+  background: white;
+  border: 1px solid #e8eaed;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+#musicControls:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Music control buttons */
+#musicPlayPause:hover {
+  background: #1557b0 !important;
+}
+
+#musicSkip:hover {
+  background: #e8eaed !important;
+}
+
+/* Volume slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: #e8eaed;
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #1a73e8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: #1557b0;
+  transform: scale(1.2);
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #1a73e8;
+  cursor: pointer;
+}
+
+/* Debug Section Styling */
+#debugSection {
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+#debugSection h3 {
+  color: #202124;
+  margin-bottom: 8px;
+}
+
+#debugSection .debug-category {
+  margin-bottom: 8px;
+  padding: 4px 0;
+}
+
+#debugSection .debug-label {
+  color: #1967d2;
+  font-weight: bold;
+  font-size: 11px;
+}
+
+#debugSection .debug-value {
+  font-size: 10px;
+  margin-left: 8px;
+}
+
+#debugSection .debug-value.success {
+  color: #34a853;
+}
+
+#debugSection .debug-value.warning {
+  color: #fbbc04;
+}
+
+#debugSection .debug-value.error {
+  color: #ea4335;
+}
+
+#debugSection .debug-value.info {
+  color: #5f6368;
+}
+
+/* Controls Section */
+#controlsSection {
+  border-radius: 8px;
+  background: #f8f9fa;
+  transition: all 0.3s ease;
+}
+
+#controlsSection h2 {
+  color: #202124;
+  margin-bottom: 12px;
+}
+
+#startStopBtn {
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+#startStopBtn:hover {
+  transform: translateY(-1px);
+}
+
+#currentTabInfo {
+  background: white;
+  border: 1px solid #e8eaed;
+  border-radius: 6px;
+  margin-top: 12px;
+  transition: all 0.2s ease;
+}
+
+#currentTabInfo:hover {
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+#currentTabFavicon {
+  border-radius: 2px;
+}
+
+/* Status info */
+.status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.info-label {
+  font-size: 12px;
+  color: #5f6368;
+  font-weight: 500;
+}
+
+.info-value {
+  font-size: 12px;
+  color: #202124;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.info-value.connected {
+  color: #34a853;
+}
+
+.info-value.error {
+  color: #ea4335;
+}
+
+/* Footer */
+.footer {
+  padding: 12px 16px;
+  border-top: 1px solid #e8eaed;
+  background: #f8f9fa;
+  text-align: center;
+}
+
+.version {
+  font-size: 10px;
+  color: #9aa0a6;
+  font-weight: 500;
+}
+
+/* Enhanced scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f3f4;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #dadce0;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9aa0a6;
+}
+
+/* Loading states */
+.loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e8eaed;
+  border-radius: 50%;
+  border-top-color: #1a73e8;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Error states */
+.error-message {
+  background: #fce8e6;
+  color: #d93025;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin: 8px 0;
+  border: 1px solid #f28b82;
+}
+
+.retry-button {
+  background: #d93025;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-top: 8px;
+  cursor: pointer;
+}
+
+.retry-button:hover {
+  background: #c5221f;
+}
+
+/* Success states */
+.success-message {
+  background: #e6f4ea;
+  color: #137333;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin: 8px 0;
+  border: 1px solid #81c995;
+}
+
+/* Responsive adjustments */
+@media (max-height: 600px) {
+  .tab-list {
+    max-height: 150px;
+  }
+  
+  #debugSection {
+    max-height: 200px;
+  }
+}
+
+/* Focus states for accessibility */
+button:focus,
+input:focus {
+  outline: 2px solid #1a73e8;
+  outline-offset: 2px;
+}
+
+/* Animation for section transitions */
+.section {
+  transition: all 0.3s ease;
+}
+
+.section.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.section.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Enhanced hover effects */
+.tab-item:hover .tab-title {
+  color: #1a73e8;
+}
+
+/* Music track display */
+#currentTrack {
+  position: relative;
+  overflow: hidden;
+}
+
+#currentTrack.playing::before {
+  content: "♪ ";
+  color: #1db954;
+  font-weight: bold;
 }
