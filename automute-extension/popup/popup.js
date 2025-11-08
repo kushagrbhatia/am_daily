@@ -233,16 +233,409 @@ class PopupController {
   }
 
   handleAutoPlayToggle(event) {
-    console.log('Auto-play toggle:', event.target.checked);
+    const enabled = event.target.checked;
+    console.log('Auto-play toggle changed to:', enabled);
+    
+    // Send message to background to update music enabled state
+    this.sendMessage({ 
+      type: 'TOGGLE_MUSIC_ENABLED', 
+      enabled: enabled 
+    }).then(response => {
+      if (response.success) {
+        console.log('✅ Music enabled state updated:', response.data);
+      } else {
+        console.error('❌ Failed to update music state:', response.error);
+      }
+    }).catch(error => {
+      console.error('❌ Error sending toggle message:', error);
+    });
   }
 
-  handleMusicPlayPause() {
-    console.log('Music play/pause clicked');
+    // ============================================================================
+  // STEP 1: Update your handleMusicPlayPause in popup.js
+  // ============================================================================
+
+  async handleMusicPlayPause() {
+    try {
+      console.log('🎵 Play/Pause clicked');
+      
+      // Get stored Spotify token
+      const result = await chrome.storage.local.get(['spotify_access_token', 'spotify_token_type']);
+      
+      if (!result.spotify_access_token) {
+        alert('Not connected to Spotify. Please connect first.');
+        return;
+      }
+      
+      // Get current playback state
+      const playbackResponse = await fetch('https://api.spotify.com/v1/me/player', {
+        headers: {
+          'Authorization': `${result.spotify_token_type || 'Bearer'} ${result.spotify_access_token}`
+        }
+      });
+      
+      if (playbackResponse.status === 204) {
+        alert('No active Spotify device found. Please open Spotify and start playing something.');
+        return;
+      }
+      
+      if (!playbackResponse.ok) {
+        throw new Error(`Spotify API error: ${playbackResponse.status}`);
+      }
+      
+      const playback = await playbackResponse.json();
+      const isPlaying = playback.is_playing;
+      
+      // Toggle play/pause
+      const endpoint = isPlaying ? 
+        'https://api.spotify.com/v1/me/player/pause' : 
+        'https://api.spotify.com/v1/me/player/play';
+      
+      const response = await fetch(endpoint, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `${result.spotify_token_type || 'Bearer'} ${result.spotify_access_token}`
+        }
+      });
+      
+      if (response.ok || response.status === 204) {
+        console.log(`✅ ${isPlaying ? 'Paused' : 'Playing'}`);
+        
+        // Update button text
+        if (this.elements.musicPlayPause) {
+          this.elements.musicPlayPause.textContent = isPlaying ? '▶ Play' : '⏸ Pause';
+        }
+        
+        // Refresh current track display
+        setTimeout(() => this.updateCurrentTrack(), 500);
+      } else {
+        throw new Error(`Failed to ${isPlaying ? 'pause' : 'play'}: ${response.status}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Play/Pause failed:', error);
+      alert(`Failed to control playback: ${error.message}`);
+    }
   }
 
-  handleMusicSkip() {
-    console.log('Music skip clicked');
+  // ============================================================================
+  // STEP 2: Update your handleMusicSkip in popup.js
+  // ============================================================================
+
+  async handleMusicSkip() {
+    try {
+      console.log('⏭ Skip clicked');
+      
+      // Get stored Spotify token
+      const result = await chrome.storage.local.get(['spotify_access_token', 'spotify_token_type']);
+      
+      if (!result.spotify_access_token) {
+        alert('Not connected to Spotify. Please connect first.');
+        return;
+      }
+      
+      // Skip to next track
+      const response = await fetch('https://api.spotify.com/v1/me/player/next', {
+        method: 'POST',
+        headers: {
+          'Authorization': `${result.spotify_token_type || 'Bearer'} ${result.spotify_access_token}`
+        }
+      });
+      
+      if (response.ok || response.status === 204) {
+        console.log('✅ Skipped to next track');
+        
+        // Wait a moment for Spotify to update, then refresh display
+        setTimeout(() => this.updateCurrentTrack(), 1000);
+      } else if (response.status === 404) {
+        alert('No active Spotify device found. Please open Spotify and start playing something.');
+      } else {
+        throw new Error(`Failed to skip: ${response.status}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Skip failed:', error);
+      alert(`Failed to skip track: ${error.message}`);
+    }
   }
+
+  // ============================================================================
+  // STEP 3: Update your handleVolumeChange in popup.js
+  // ============================================================================
+
+  async handleVolumeChange(event) {
+    try {
+      const volume = parseInt(event.target.value);
+      console.log('🔊 Volume changed to:', volume);
+      
+      // Get stored Spotify token
+      const result = await chrome.storage.local.get(['spotify_access_token', 'spotify_token_type']);
+      
+      if (!result.spotify_access_token) {
+        console.warn('Not connected to Spotify');
+        return;
+      }
+      
+      // Set volume (0-100)
+      const response = await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${volume}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `${result.spotify_token_type || 'Bearer'} ${result.spotify_access_token}`
+        }
+      });
+      
+      if (response.ok || response.status === 204) {
+        console.log(`✅ Volume set to ${volume}%`);
+      } else if (response.status === 404) {
+        console.warn('No active Spotify device found');
+      } else {
+        console.error(`Failed to set volume: ${response.status}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Volume change failed:', error);
+    }
+  }
+
+  // ============================================================================
+  // STEP 4: Add a method to update the current track display
+  // ============================================================================
+
+  async updateCurrentTrack() {
+    try {
+      // Get stored Spotify token
+      const result = await chrome.storage.local.get(['spotify_access_token', 'spotify_token_type']);
+      
+      if (!result.spotify_access_token) {
+        return;
+      }
+      
+      // Get current playback
+      const response = await fetch('https://api.spotify.com/v1/me/player', {
+        headers: {
+          'Authorization': `${result.spotify_token_type || 'Bearer'} ${result.spotify_access_token}`
+        }
+      });
+      
+      if (response.status === 204 || !response.ok) {
+        // No active playback
+        if (this.elements.currentTrack) {
+          this.elements.currentTrack.textContent = 'No track playing';
+        }
+        if (this.elements.musicPlayPause) {
+          this.elements.musicPlayPause.textContent = '▶ Play';
+        }
+        return;
+      }
+      
+      const playback = await response.json();
+      
+      // Update current track display
+      if (this.elements.currentTrack && playback.item) {
+        const trackName = playback.item.name;
+        const artistName = playback.item.artists.map(a => a.name).join(', ');
+        this.elements.currentTrack.textContent = `${trackName} - ${artistName}`;
+        this.elements.currentTrack.title = `${trackName} - ${artistName}`; // Full text in tooltip
+      }
+      
+      // Update play/pause button
+      if (this.elements.musicPlayPause) {
+        this.elements.musicPlayPause.textContent = playback.is_playing ? '⏸ Pause' : '▶ Play';
+      }
+      
+      // Update volume slider
+      if (this.elements.musicVolume && playback.device) {
+        this.elements.musicVolume.value = playback.device.volume_percent || 70;
+      }
+      
+    } catch (error) {
+      console.error('Failed to update current track:', error);
+    }
+  }
+
+  // ============================================================================
+  // STEP 5: Update startPeriodicUpdates to refresh current track
+  // ============================================================================
+
+  startPeriodicUpdates() {
+    console.log('Starting periodic updates for Spotify');
+    
+    // Update status every 5 seconds
+    setInterval(() => {
+      this.updateStatus();
+    }, 5000);
+    
+    // Update current track every 3 seconds
+    setInterval(() => {
+      if (this.elements.spotifyConnected && 
+          this.elements.spotifyConnected.style.display !== 'none') {
+        this.updateCurrentTrack();
+      }
+    }, 3000);
+  }
+
+  // ============================================================================
+  // STEP 6: Call updateCurrentTrack when showing connected state
+  // ============================================================================
+
+  showSpotifyConnected() {
+    if (this.elements.spotifyDisconnected) {
+      this.elements.spotifyDisconnected.style.display = 'none';
+    }
+    if (this.elements.spotifyConnected) {
+      this.elements.spotifyConnected.style.display = 'block';
+    }
+    if (this.elements.spotifyLoading) {
+      this.elements.spotifyLoading.style.display = 'none';
+    }
+    if (this.elements.spotifyError) {
+      this.elements.spotifyError.style.display = 'none';
+    }
+    
+    // Show the Spotify section (in case it was hidden)
+    if (this.elements.spotifySection) {
+      this.elements.spotifySection.style.display = 'block';
+    }
+    
+    // Update current track immediately
+    this.updateCurrentTrack();
+  }
+
+  // ============================================================================
+  // STEP 7: Handle token expiration gracefully
+  // ============================================================================
+
+  async makeSpotifyRequest(url, options = {}) {
+    try {
+      // Get stored Spotify token
+      const result = await chrome.storage.local.get([
+        'spotify_access_token', 
+        'spotify_token_type',
+        'spotify_expires_at'
+      ]);
+      
+      if (!result.spotify_access_token) {
+        throw new Error('Not connected to Spotify');
+      }
+      
+      // Check if token is expired
+      if (result.spotify_expires_at && Date.now() >= result.spotify_expires_at) {
+        console.log('Token expired, please reconnect');
+        this.showSpotifyError('Session expired. Please reconnect to Spotify.');
+        await this.handleSpotifyLogout();
+        throw new Error('Token expired');
+      }
+      
+      // Make request with token
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `${result.spotify_token_type || 'Bearer'} ${result.spotify_access_token}`,
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      });
+      
+      // Handle token expiration (401)
+      if (response.status === 401) {
+        console.log('Token invalid, please reconnect');
+        this.showSpotifyError('Session expired. Please reconnect to Spotify.');
+        await this.handleSpotifyLogout();
+        throw new Error('Token invalid');
+      }
+      
+      return response;
+      
+    } catch (error) {
+      console.error('Spotify API request failed:', error);
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // STEP 8: Simplified versions using the helper method
+  // ============================================================================
+
+  // Replace your handleMusicPlayPause with this simpler version:
+  async handleMusicPlayPauseSimple() {
+    try {
+      // Get current state
+      const response = await this.makeSpotifyRequest('https://api.spotify.com/v1/me/player');
+      
+      if (response.status === 204) {
+        alert('No active Spotify device. Please open Spotify and play something.');
+        return;
+      }
+      
+      const playback = await response.json();
+      const endpoint = playback.is_playing ? 
+        'https://api.spotify.com/v1/me/player/pause' : 
+        'https://api.spotify.com/v1/me/player/play';
+      
+      await this.makeSpotifyRequest(endpoint, { method: 'PUT' });
+      
+      setTimeout(() => this.updateCurrentTrack(), 500);
+      
+    } catch (error) {
+      console.error('Play/Pause failed:', error);
+      alert(`Playback control failed: ${error.message}`);
+    }
+  }
+
+// ============================================================================
+// DEBUGGING: Add console commands to test
+// ============================================================================
+
+// You can test these in the browser console:
+/*
+// Test getting current playback
+chrome.storage.local.get(['spotify_access_token', 'spotify_token_type'], async (result) => {
+  const response = await fetch('https://api.spotify.com/v1/me/player', {
+    headers: { 'Authorization': `${result.spotify_token_type} ${result.spotify_access_token}` }
+  });
+  console.log('Status:', response.status);
+  if (response.ok) {
+    const data = await response.json();
+    console.log('Playback:', data);
+  }
+});
+
+// Test pause
+chrome.storage.local.get(['spotify_access_token', 'spotify_token_type'], async (result) => {
+  const response = await fetch('https://api.spotify.com/v1/me/player/pause', {
+    method: 'PUT',
+    headers: { 'Authorization': `${result.spotify_token_type} ${result.spotify_access_token}` }
+  });
+  console.log('Pause status:', response.status);
+});
+*/
+
+// ============================================================================
+// COMMON ISSUES AND SOLUTIONS
+// ============================================================================
+
+/*
+ISSUE 1: "No active device" error
+SOLUTION: Make sure Spotify desktop app or web player is open and has played 
+         something at least once
+
+ISSUE 2: Controls work but with delay
+SOLUTION: This is normal - Spotify API can have 1-2 second latency
+
+ISSUE 3: Volume control doesn't work
+SOLUTION: Some Spotify devices (like phones) don't allow remote volume control
+         Try using the desktop app
+
+ISSUE 4: Token expires quickly
+SOLUTION: Implicit flow tokens expire in 1 hour. You'll need to reconnect.
+         Consider implementing token refresh in the background script.
+
+ISSUE 5: 403 Forbidden error
+SOLUTION: Make sure your Spotify app has the correct scopes enabled:
+         - user-read-playback-state
+         - user-modify-playback-state
+         - user-read-currently-playing
+*/
 
   handleVolumeChange(event) {
     console.log('Volume changed to:', event.target.value);

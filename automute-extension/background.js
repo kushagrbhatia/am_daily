@@ -3,18 +3,15 @@ import screenshotManager from './utils/screenshot.js';
 import apiClient from './utils/api.js';
 import audioController from './utils/audio.js';
 import memoryManager from './utils/memory.js';
-// Make sure this line imports authReady
-import spotifyAuth, { authReady } from './utils/spotify-auth.js'; 
-import spotifyApi from './utils/api.js';
+import spotifyAuth from './utils/spotify-auth.js';
+import spotifyApi from './utils/spotify-api.js';
 import musicController from './utils/music-controller.js';
-
-// ... (rest of the file)
 
 class AutoMuteDetector {
   constructor() {
     this.isMonitoring = false;
     this.currentTabId = null;
-    this.currentTabUrl = null;  // Track current tab URL for site detection
+    this.currentTabUrl = null;
     this.screenshotInterval = null;
     this.lastClassification = null;
     this.screenshotCount = 0;
@@ -29,11 +26,13 @@ class AutoMuteDetector {
       backoffMultiplier: 1
     };
     
-    // NEW: Music integration state
+    // Music integration state variables
     this.musicEnabled = false;
+    this.musicStartedByExtension = false;
+    this.originalSpotifyState = null;
     this.lastMusicAction = null;
     
-    // Bind methods
+    // Bind ALL methods
     this.startMonitoring = this.startMonitoring.bind(this);
     this.stopMonitoring = this.stopMonitoring.bind(this);
     this.captureAndAnalyze = this.captureAndAnalyze.bind(this);
@@ -42,6 +41,14 @@ class AutoMuteDetector {
     this.handleTabUpdated = this.handleTabUpdated.bind(this);
     this.adjustRateLimit = this.adjustRateLimit.bind(this);
     this.scheduleNextCapture = this.scheduleNextCapture.bind(this);
+    this.loadMusicSettings = this.loadMusicSettings.bind(this);
+    this.handleSpotifyLogin = this.handleSpotifyLogin.bind(this);
+    this.handleSpotifyLogout = this.handleSpotifyLogout.bind(this);
+    this.getSpotifyStatus = this.getSpotifyStatus.bind(this);
+    this.getSpotifyPlaylists = this.getSpotifyPlaylists.bind(this);
+    this.handleSpotifyControl = this.handleSpotifyControl.bind(this);
+    this.updateMusicSettings = this.updateMusicSettings.bind(this);
+    this.toggleMusicEnabled = this.toggleMusicEnabled.bind(this);
     
     // Initialize event listeners
     this.initializeEventListeners();
@@ -90,8 +97,6 @@ class AutoMuteDetector {
    */
   async handleMessage(message, sender, sendResponse) {
     try {
-      await authReady;
-
       console.log('Received message:', message.type);
       
       switch (message.type) {
@@ -123,8 +128,9 @@ class AutoMuteDetector {
         case 'GET_HISTORY':
           sendResponse({ success: true, data: this.classificationHistory });
           break;
+
           
-        // NEW: Spotify-related message handlers
+        // ADD ALL OF THESE NEW CASES:
         case 'SPOTIFY_LOGIN':
           const loginResult = await this.handleSpotifyLogin();
           sendResponse({ success: true, data: loginResult });
@@ -159,7 +165,8 @@ class AutoMuteDetector {
           const toggleResult = await this.toggleMusicEnabled(message.enabled);
           sendResponse({ success: true, data: toggleResult });
           break;
-          
+        
+
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
       }
@@ -173,117 +180,147 @@ class AutoMuteDetector {
    * Start monitoring with adaptive rate limiting
    */
   async startMonitoring(tabId) {
-    try {
-      if (this.isMonitoring) {
-        await this.stopMonitoring();
-      }
-      
-      console.log(`Starting monitoring for tab ${tabId}`);
-      
-      // Validate tab
-      const tab = await this.getEnhancedTabInfo(tabId);
-      if (!tab) {
-        throw new Error('Tab not found or not accessible');
-      }
-      
-      if (!this.isTabMonitorable(tab)) {
-        throw new Error('Tab cannot be monitored (internal page)');
-      }
-      
-      // Set monitoring state
-      this.isMonitoring = true;
-      this.currentTabId = tabId;
-      this.currentTabUrl = tab.url;  // Store tab URL for site detection
-      this.screenshotCount = 0;
-      this.lastClassification = null;
-      
-      // Reset rate limiting
-      this.rateLimitState.consecutiveFailures = 0;
-      this.rateLimitState.backoffMultiplier = 1;
-      this.rateLimitState.currentInterval = CONFIG.SCREENSHOT_INTERVAL;
-      
-      // NEW: Enable music controller and load settings
-      await this.loadMusicSettings();
-      musicController.setEnabled(this.musicEnabled);
-      
-      // Start capture loop
-      this.scheduleNextCapture();
-      
-      console.log(`✅ Monitoring started for tab ${tabId}: ${tab.title} (${tab.url})`);
-      
-      return {
-        success: true,
-        tabId: this.currentTabId,
-        tabTitle: tab.title,
-        tabUrl: tab.url,
-        interval: this.rateLimitState.currentInterval,
-        musicEnabled: this.musicEnabled  // NEW: Include music status
-      };
-      
-    } catch (error) {
-      this.isMonitoring = false;
-      this.currentTabId = null;
-      this.currentTabUrl = null;
-      console.error('Failed to start monitoring:', error);
-      throw error;
+  try {
+    if (this.isMonitoring) {
+      await this.stopMonitoring();
     }
+    
+    console.log(`Starting monitoring for tab ${tabId}`);
+    
+    // Validate tab
+    const tab = await this.getEnhancedTabInfo(tabId);
+    if (!tab) {
+      throw new Error('Tab not found or not accessible');
+    }
+    
+    if (!this.isTabMonitorable(tab)) {
+      throw new Error('Tab cannot be monitored (internal page)');
+    }
+    
+    // Set monitoring state
+    this.isMonitoring = true;
+    this.currentTabId = tabId;
+    this.currentTabUrl = tab.url;
+    this.screenshotCount = 0;
+    this.lastClassification = null;
+    
+    // Reset rate limiting
+    this.rateLimitState.consecutiveFailures = 0;
+    this.rateLimitState.backoffMultiplier = 1;
+    this.rateLimitState.currentInterval = CONFIG.SCREENSHOT_INTERVAL;
+    // ===== STEP 2: LOAD MUSIC SETTINGS AND ENABLE =====
+    await this.loadMusicSettings();
+    
+    // Check if Spotify is authenticated
+    const spotifyStatus = spotifyAuth.getAuthStatus();
+    if (spotifyStatus.isAuthenticated) {
+      console.log('✅ Spotify is authenticated and ready');
+      musicController.setEnabled(this.musicEnabled);
+    } else {
+      console.warn('⚠️ Spotify not authenticated - music features disabled');
+      this.musicEnabled = false;
+    }
+    // ================================================
+    
+    // Start capture loop
+    this.scheduleNextCapture();
+    
+    console.log(`✅ Monitoring started for tab ${tabId}: ${tab.title}`);
+    console.log(`   Music enabled: ${this.musicEnabled}`);
+    console.log(`   Spotify auth: ${spotifyStatus.isAuthenticated}`);
+    
+    return {
+      success: true,
+      tabId: this.currentTabId,
+      tabTitle: tab.title,
+      tabUrl: tab.url,
+      interval: this.rateLimitState.currentInterval,
+      musicEnabled: this.musicEnabled,
+      spotifyAuthenticated: spotifyStatus.isAuthenticated
+    };
+    
+  } catch (error) {
+    this.isMonitoring = false;
+    this.currentTabId = null;
+    this.currentTabUrl = null;
+    console.error('Failed to start monitoring:', error);
+    throw error;
+  }
+}
+  
+
+  async stopMonitoring() {
+  try {
+    console.log('Stopping monitoring...');
+    
+    // Clear interval
+    if (this.screenshotInterval) {
+      clearTimeout(this.screenshotInterval);
+      this.screenshotInterval = null;
+    }
+    
+    // Restore audio if we were managing it
+    if (this.currentTabId) {
+      try {
+        await audioController.unmuteTab(this.currentTabId);
+      } catch (error) {
+        console.warn('Failed to restore audio on stop:', error);
+      }
+    }
+    
+    // ===== STEP 3: EMERGENCY STOP MUSIC IF PLAYING =====
+    if (this.musicStartedByExtension) {
+      try {
+        console.log('🎵 Stopping music due to monitoring stop...');
+        await musicController.emergencyStop();
+        this.musicStartedByExtension = false;
+        console.log('✅ Music stopped successfully');
+      } catch (error) {
+        console.warn('⚠️ Failed to stop music during monitoring stop:', error);
+      }
+    }
+    // ================================================
+    
+    // Reset state
+    const stoppedTabId = this.currentTabId;
+    this.isMonitoring = false;
+    this.currentTabId = null;
+    this.currentTabUrl = null;
+    this.lastClassification = null;
+    this.lastMusicAction = null;
+    this.musicStartedByExtension = false;
+    this.originalSpotifyState = null;
+    
+    // Clean up memory
+    await memoryManager.cleanup();
+    
+    console.log(`✅ Monitoring stopped for tab ${stoppedTabId}`);
+    
+    return {
+      success: true,
+      stoppedTabId
+    };
+    
+  } catch (error) {
+    console.error('Error stopping monitoring:', error);
+    throw error;
   }
   
+}
   /**
-   * Stop monitoring and clean up
-   */
-  async stopMonitoring() {
+ * Load music settings from storage
+ */
+  async loadMusicSettings() {
     try {
-      console.log('Stopping monitoring...');
-      
-      // Clear interval
-      if (this.screenshotInterval) {
-        clearTimeout(this.screenshotInterval);
-        this.screenshotInterval = null;
-      }
-      
-      // Restore audio if we were managing it
-      if (this.currentTabId) {
-        try {
-          await audioController.unmuteTab(this.currentTabId);
-        } catch (error) {
-          console.warn('Failed to restore audio on stop:', error);
-        }
-      }
-      
-      // NEW: Stop any music that might be playing
-      if (this.musicEnabled && musicController.getState().state.musicStartedByExtension) {
-        try {
-          await musicController.emergencyStop();
-          console.log('🎵 Emergency stopped music during monitoring stop');
-        } catch (error) {
-          console.warn('Failed to stop music during monitoring stop:', error);
-        }
-      }
-      
-      // Reset state
-      const stoppedTabId = this.currentTabId;
-      this.isMonitoring = false;
-      this.currentTabId = null;
-      this.currentTabUrl = null;
-      this.lastClassification = null;
-      this.lastMusicAction = null;  // NEW: Reset music action
-      
-      // Clean up memory
-      await memoryManager.cleanup();
-      
-      console.log(`✅ Monitoring stopped for tab ${stoppedTabId}`);
-      
-      return {
-        success: true,
-        stoppedTabId
-      };
-      
+      const result = await chrome.storage.local.get(['music_enabled']);
+      this.musicEnabled = result.music_enabled ?? false;
+      console.log(`Music integration ${this.musicEnabled ? 'enabled' : 'disabled'}`);
     } catch (error) {
-      console.error('Error stopping monitoring:', error);
-      throw error;
+      console.error('Failed to load music settings:', error);
+      this.musicEnabled = false;
     }
   }
+    
   
   /**
    * Schedule next screenshot capture with adaptive timing
@@ -407,85 +444,141 @@ class AutoMuteDetector {
   }
   
   /**
-   * ENHANCED handleClassificationResult with detailed logging AND music integration
+   * ENHANCED handleClassificationResult with detailed logging
    */
-  async handleClassificationResult(classification) {
-    try {
-      console.log('🔍 DETAILED CLASSIFICATION ANALYSIS:');
-      console.log('Raw classification:', classification);
-      
-      // Get site context
-      const hostname = this.extractHostname(this.currentTabUrl);
-      const siteCategory = this.getSiteCategory(hostname);
-      
-      console.log(`🌐 Site context: ${hostname} (category: ${siteCategory})`);
-      
-      // Store classification with enhanced metadata
-      this.lastClassification = {
-        ...classification,
-        timestamp: new Date().toISOString(),
-        screenshotNumber: this.screenshotCount,
-        hostname: hostname,
-        siteCategory: siteCategory,
-        tabUrl: this.currentTabUrl
-      };
-      
-      // Add to history
-      this.classificationHistory.unshift(this.lastClassification);
-      if (this.classificationHistory.length > this.maxHistorySize) {
-        this.classificationHistory = this.classificationHistory.slice(0, this.maxHistorySize);
-      }
-      
-      // ENHANCED: Determine audio action with detailed logging
-      const shouldMute = await this.shouldMuteForClassificationWithLogging(classification);
-      
-      console.log(`🎵 AUDIO DECISION: ${shouldMute.mute ? 'MUTE' : 'UNMUTE'}`);
-      console.log(`🎵 REASONING: ${shouldMute.reason}`);
-      
-      if (shouldMute.mute) {
-        console.log('🔇 EXECUTING MUTE...');
-        await audioController.muteTab(this.currentTabId, { smooth: true });
-        console.log('🔇 MUTE COMPLETED');
-        
-        // NEW: Start music when ad is detected and muted
-        if (this.musicEnabled && classification.classification === CONFIG.CLASSIFICATION_TYPES.AD) {
-          try {
-            console.log('🎵 STARTING BACKGROUND MUSIC...');
-            const musicResult = await musicController.handleAdDetected(classification);
-            this.lastMusicAction = musicResult;
-            console.log('🎵 Music action completed:', musicResult);
-          } catch (error) {
-            console.error('❌ Failed to start music:', error);
-          }
-        }
-        
-      } else {
-        console.log('🔊 EXECUTING UNMUTE...');
-        await audioController.unmuteTab(this.currentTabId, { smooth: true });
-        console.log('🔊 UNMUTE COMPLETED');
-        
-        // NEW: Stop music when returning to non-ad content
-        if (this.musicEnabled && this.lastMusicAction?.action === 'music_started') {
-          try {
-            console.log('🎵 STOPPING BACKGROUND MUSIC...');
-            const musicResult = await musicController.handleAdEnded(classification);
-            this.lastMusicAction = musicResult;
-            console.log('🎵 Music action completed:', musicResult);
-          } catch (error) {
-            console.error('❌ Failed to stop music:', error);
-          }
-        }
-      }
-      
-      // Verify audio state after action
-      const finalAudioState = await audioController.getTabAudioState(this.currentTabId);
-      console.log('🎵 FINAL AUDIO STATE:', finalAudioState);
-      
-    } catch (error) {
-      console.error('❌ Error handling classification result:', error);
+  /**
+ * ENHANCED handleClassificationResult with detailed logging AND music integration
+ */
+async handleClassificationResult(classification) {
+  try {
+    console.log('🔍 DETAILED CLASSIFICATION ANALYSIS:');
+    console.log('Raw classification:', classification);
+    
+    // Get site context
+    const hostname = this.extractHostname(this.currentTabUrl);
+    const siteCategory = this.getSiteCategory(hostname);
+    
+    console.log(`🌐 Site context: ${hostname} (category: ${siteCategory})`);
+    
+    // Store classification with enhanced metadata
+    this.lastClassification = {
+      ...classification,
+      timestamp: new Date().toISOString(),
+      screenshotNumber: this.screenshotCount,
+      hostname: hostname,
+      siteCategory: siteCategory,
+      tabUrl: this.currentTabUrl
+    };
+    
+    // Add to history
+    this.classificationHistory.unshift(this.lastClassification);
+    if (this.classificationHistory.length > this.maxHistorySize) {
+      this.classificationHistory = this.classificationHistory.slice(0, this.maxHistorySize);
     }
+    
+    // Determine audio action
+    const shouldMute = await this.shouldMuteForClassificationWithLogging(classification);
+    
+    console.log(`🎵 AUDIO DECISION: ${shouldMute.mute ? 'MUTE' : 'UNMUTE'}`);
+    console.log(`🎵 REASONING: ${shouldMute.reason}`);
+    
+    // ===== HANDLE AD DETECTED (MUTE + MUSIC) =====
+    if (shouldMute.mute) {
+      console.log('🔇 EXECUTING MUTE...');
+      await audioController.muteTab(this.currentTabId, { smooth: true });
+      console.log('🔇 MUTE COMPLETED');
+      
+      // ADD THIS ENTIRE SECTION - START MUSIC WHEN AD IS DETECTED
+      console.log('🎵 CHECKING IF SHOULD START MUSIC...');
+      console.log('   musicEnabled:', this.musicEnabled);
+      console.log('   classification type:', classification.classification);
+      console.log('   CONFIG.CLASSIFICATION_TYPES.AD:', CONFIG.CLASSIFICATION_TYPES.AD);
+      console.log('   is AD match?:', classification.classification === CONFIG.CLASSIFICATION_TYPES.AD);
+      
+      if (this.musicEnabled && classification.classification === CONFIG.CLASSIFICATION_TYPES.AD) {
+        // Check if Spotify is authenticated
+        const isAuthenticated = spotifyAuth.isAuthenticated();
+        console.log('   Spotify authenticated?:', isAuthenticated);
+        
+        if (!isAuthenticated) {
+          console.warn('⚠️ Spotify not authenticated, cannot start music');
+        } else {
+          try {
+            console.log('🎵 AD DETECTED - STARTING BACKGROUND MUSIC...');
+            const musicResult = await musicController.handleAdDetected(classification);
+            console.log('🎵 Music controller returned:', musicResult);
+            
+            if (musicResult && musicResult.success) {
+              this.musicStartedByExtension = true;
+              this.lastMusicAction = musicResult;
+              console.log('✅ Music started successfully:', musicResult);
+            } else {
+              console.error('❌ Failed to start music:', musicResult?.error || 'Unknown error');
+            }
+          } catch (error) {
+            console.error('❌ Exception while starting music:', error);
+            console.error('❌ Error stack:', error.stack);
+            this.lastMusicAction = { 
+              success: false, 
+              error: error.message,
+              action: 'music_start_failed'
+            };
+          }
+        }
+      } else {
+        console.log('⏭️ Skipping music start:');
+        console.log('   musicEnabled:', this.musicEnabled);
+        console.log('   is ad?:', classification.classification === CONFIG.CLASSIFICATION_TYPES.AD);
+      }
+      
+    // ===== HANDLE AD ENDED (UNMUTE + STOP MUSIC) =====
+    } else {
+      console.log('🔊 EXECUTING UNMUTE...');
+      await audioController.unmuteTab(this.currentTabId, { smooth: true });
+      console.log('🔊 UNMUTE COMPLETED');
+      
+      // STOP MUSIC WHEN RETURNING TO NON-AD CONTENT
+      console.log('🎵 CHECKING IF SHOULD STOP MUSIC...');
+      console.log('   musicEnabled:', this.musicEnabled);
+      console.log('   musicStartedByExtension:', this.musicStartedByExtension);
+      
+      if (this.musicEnabled && this.musicStartedByExtension) {
+        try {
+          console.log('🎵 AD ENDED - STOPPING BACKGROUND MUSIC...');
+          const musicResult = await musicController.handleAdEnded(classification);
+          console.log('🎵 Music controller returned:', musicResult);
+          
+          if (musicResult && musicResult.success) {
+            this.musicStartedByExtension = false;
+            this.lastMusicAction = musicResult;
+            console.log('✅ Music stopped successfully:', musicResult);
+          } else {
+            console.error('❌ Failed to stop music:', musicResult?.error || 'Unknown error');
+          }
+        } catch (error) {
+          console.error('❌ Exception while stopping music:', error);
+          console.error('❌ Error stack:', error.stack);
+          this.lastMusicAction = { 
+            success: false, 
+            error: error.message,
+            action: 'music_stop_failed'
+          };
+        }
+      } else {
+        console.log('⏭️ Skipping music stop - music not started by extension');
+      }
+    }
+    
+    // Verify audio state after action
+    const finalAudioState = await audioController.getTabAudioState(this.currentTabId);
+    console.log('🎵 FINAL AUDIO STATE:', finalAudioState);
+    
+  } catch (error) {
+    console.error('❌ Error handling classification result:', error);
+    console.error('❌ Error stack:', error.stack);
   }
-  
+}
+
   /**
    * ENHANCED shouldMuteForClassification with detailed logging
    */
@@ -621,7 +714,7 @@ class AutoMuteDetector {
   }
   
   /**
-   * Extract hostname from URL
+   * ADD: Extract hostname from URL
    */
   extractHostname(url) {
     if (!url) return '';
@@ -636,7 +729,7 @@ class AutoMuteDetector {
   }
   
   /**
-   * Get site category for classification logic
+   * ADD: Get site category for classification logic
    */
   getSiteCategory(hostname) {
     if (!hostname) return 'general';
@@ -814,7 +907,7 @@ class AutoMuteDetector {
     if (tabId === this.currentTabId && changeInfo.url) {
       console.log(`Monitored tab navigated to: ${changeInfo.url}`);
       
-      // Update stored URL for site detection
+      // UPDATE: Update stored URL for site detection
       this.currentTabUrl = changeInfo.url;
       
       // Check if new URL is monitorable
@@ -864,7 +957,7 @@ class AutoMuteDetector {
             status: tab.status,
             windowId: tab.windowId,
             index: tab.index,
-            siteCategory: this.getSiteCategory(this.extractHostname(tab.url))
+            siteCategory: this.getSiteCategory(this.extractHostname(tab.url))  // ADD: Include site category
           }))
           .sort((a, b) => {
             if (a.windowId !== b.windowId) {
@@ -880,8 +973,11 @@ class AutoMuteDetector {
   }
   
   /**
-   * Get current status including music state
+   * Get current status
    */
+/**
+ * Get current status including music state
+  */
   async getStatus() {
     const audioState = this.currentTabId ? 
       await audioController.getTabAudioState(this.currentTabId) : null;
@@ -942,38 +1038,10 @@ class AutoMuteDetector {
       await this.stopMonitoring();
       await audioController.cleanup();
       await memoryManager.cleanup();
-      
-      // NEW: Clean up music controller
-      if (musicController.getState().state.musicStartedByExtension) {
-        await musicController.emergencyStop();
-      }
-      
     } catch (error) {
       console.error('Error during cleanup:', error);
     }
   }
-  
-  // =============================================================================
-  // NEW: SPOTIFY INTEGRATION METHODS
-  // =============================================================================
-  
-  /**
-   * Load music settings from storage
-   */
-  async loadMusicSettings() {
-    try {
-      const result = await chrome.storage.local.get(['music_enabled']);
-      this.musicEnabled = result.music_enabled ?? false;
-      console.log(`Music integration ${this.musicEnabled ? 'enabled' : 'disabled'}`);
-    } catch (error) {
-      console.error('Failed to load music settings:', error);
-      this.musicEnabled = false;
-    }
-  }
-  
-  /**
-   * Spotify login handler
-   */
   async handleSpotifyLogin() {
     try {
       const result = await spotifyAuth.login();
@@ -1071,25 +1139,6 @@ class AutoMuteDetector {
           
         case 'set_volume':
           result = await musicController.setVolume(params.volume);
-          break;
-          
-        case 'play_playlist':
-          result = await spotifyApi.startPlayback({
-            contextUri: params.playlistUri,
-            offset: params.offset || 0
-          });
-          break;
-          
-        case 'search':
-          result = await spotifyApi.searchTracks(params.query, params.type, params.limit);
-          break;
-          
-        case 'get_devices':
-          result = await spotifyApi.getDevices();
-          break;
-          
-        case 'transfer_playback':
-          result = await spotifyApi.transferPlayback(params.deviceId, params.play);
           break;
           
         default:
