@@ -5,44 +5,79 @@ const openai = new OpenAI({
   apiKey: config.openaiApiKey
 });
 
-// UPDATED YouTube-specific prompt (video player focused)
-const YOUTUBE_VIDEO_PLAYER_FOCUSED_PROMPT = `Analyze this YouTube screenshot for advertisements. Focus ONLY on the video player area (the rectangular area where video content plays).
+// ENHANCED YouTube-specific prompt with spatial awareness and step-by-step guidance
+const YOUTUBE_VIDEO_PLAYER_FOCUSED_PROMPT = `You are an expert at identifying advertisements in YouTube video screenshots.
 
-CRITICAL: IGNORE all text outside the video player including:
-- Video titles below the player
-- Video descriptions  
-- Comments section
-- Sidebar recommended videos
-- Channel names and subscriber counts
+STEP 1: LOCATE THE VIDEO PLAYER
+The video player is the LARGE CENTRAL RECTANGLE (typically 16:9 aspect ratio) where video content plays.
+- Usually occupies 60-80% of screen width in the upper-center portion of the page
+- Has playback controls (play/pause, timeline, volume) at the bottom
+- IGNORE everything outside this rectangle
 
-LOOK ONLY at the VIDEO PLAYER RECTANGLE for these AD INDICATORS:
+STEP 2: IDENTIFY AD INDICATORS (in priority order)
 
-HIGH PRIORITY AD SIGNS (in video player area):
-- "Sponsored" text overlay in bottom-left of video player
-- "Skip Ad" buttons anywhere on the video player
-- Yellow "Ad" badges in video player corners
-- "Learn More" or "Shop Now" buttons overlaying the video
-- "Visit advertiser's site" text on video player
-- Ad countdown timers overlaying video content
-- Corporate product advertisements playing in the video frame
-- Pre-roll, mid-roll, or post-roll video commercials
-- Any promotional overlays blocking or covering video content
+🔴 DEFINITIVE AD SIGNS (95-100% confidence):
+1. Yellow "Ad" icon/badge in bottom-left corner of video player
+2. "Skip Ad" button (typically bottom-right, appears after 5 seconds)
+3. Ad countdown timer: "Ad will end in X seconds" or "Video will play after ad"
+4. "Video will play after ad" message
+5. "Ad X of Y" indicator showing multiple ads
+6. "Visit advertiser" or "Why this ad?" links on video player
 
-OTHER (UNMUTE these):
-- Actual video content playing (regardless of topic)
-- Sports highlights, music videos, tutorials (when actually playing)
-- Paused video frames showing real content
-- Video thumbnails or preview screens
-- Loading/buffering indicators
+⚠️ STRONG AD INDICATORS (80-95% confidence):
+7. "Sponsored" text overlay on the video player itself
+8. "Learn More" or "Shop Now" CTA buttons overlaying the video content
+9. Commercial product/service advertisement playing in the video frame (car ads, product commercials)
+10. Black bars/letterboxing with promotional content and company logos
+11. Muted speaker icon with "Tap to unmute ad"
 
-EXAMPLE: If you see a video player showing content with "Sponsored" text overlay, classify as "ad" even if the title mentions sports.
+✅ NOT ADS - These are NON-AD content:
+- Video thumbnails or preview screens (even if showing products)
+- Paused video at any frame showing actual content
+- YouTube's video suggestions sidebar (right side of screen)
+- Video title/description containing words like "ad", "sponsor", "commercial" (text BELOW player)
+- Channel promotional content within the creator's own video (in-video sponsorships)
+- Product reviews, unboxing videos, or tutorials (creator content)
+- Video buffering/loading screens
+- End-screen video recommendations
+- Actual video content playing (even if it contains sponsor mentions)
 
-Response: {"classification": "ad|other", "confidence": 0-100, "reasoning": "what you saw IN the video player only"}
+CRITICAL RULES:
+❌ DO NOT classify as "ad" based on:
+   - Video TITLES or DESCRIPTIONS mentioning sponsors
+   - Sidebar recommended videos
+   - Comments section content
+   - Channel names or subscriber information
+   - Static banner ads on the webpage outside video player
+   - The actual video content itself (only pre-roll/mid-roll/post-roll ads should be classified as "ad")
 
-REMEMBER: Video titles and descriptions are irrelevant - only analyze what's visible in the video player area.`;
+STEP 3: CONFIDENCE SCORING
+- 95-100%: Multiple definitive signs (ad badge + skip button + countdown)
+- 85-94%: One definitive sign present
+- 70-84%: Multiple strong indicators
+- 60-69%: One strong indicator
+- Below 60%: Uncertain, default to "non-ad"
 
-// Sports streaming sites prompt (unchanged)
-const SPORTS_STREAMING_PROMPT = `Classify this sports streaming screenshot as "ad", "game", or "other".
+EXAMPLES:
+
+Example 1 (AD - 100% confidence):
+"Yellow 'Ad' badge in bottom-left, 'Skip Ad' button in bottom-right, countdown shows '5 seconds remaining'"
+
+Example 2 (AD - 95% confidence):
+"Car commercial playing in video player, 'Learn More' button overlaying the video, no skip button visible yet"
+
+Example 3 (NON-AD - 95% confidence):
+"Video title says 'Sponsored by NordVPN' but video player shows actual gaming content with no ad indicators"
+
+Example 4 (NON-AD - 90% confidence):
+"Paused video showing product review, creator is holding product on screen, playback controls visible, no ad overlays"
+
+Response format: {"classification": "ad|non-ad", "confidence": 0-100, "reasoning": "specific visual elements IN video player only"}`;
+
+// Sports streaming sites prompt
+const SPORTS_STREAMING_PROMPT = `You're an expert at identifying ads in sports streaming screenshots.
+
+Classify this sports streaming screenshot as "ad" or "non-ad".
 
 PRIORITY 1 - STREAMING AD DETECTION:
 Look for these ad patterns FIRST:
@@ -51,13 +86,14 @@ Look for these ad patterns FIRST:
 - Betting/gambling ads (DraftKings, FanDuel, BetMGM, etc.)
 - Car commercials, beer ads, insurance ads during breaks
 - "Advertisement" overlays on streaming players
-- Sponsored content banners during live games
-- Product placements during sports commentary
-- Auto/beer/food brands prominently displayed
+- Sponsored content banners covering the game feed
+- Product placement commercials during breaks
+- Auto/beer/food brand commercials (not just logos on field/jerseys)
 - Subscription prompts for premium tiers
 - "Skip Ad" or countdown timers on streaming platforms
+- Full-screen promotional content blocking the game
 
-PRIORITY 2 - LIVE SPORTS DETECTION:
+PRIORITY 2 - LIVE SPORTS/NON-AD DETECTION:
 Only if NO ads found:
 - Live NFL, NBA, MLB, NHL, Soccer games in progress
 - Active gameplay with players, referees, scoreboards
@@ -67,25 +103,36 @@ Only if NO ads found:
 - Playing fields: football field, basketball court, soccer pitch, hockey rink
 - Team uniforms, equipment, stadium views
 - Sports commentary and analysis during games
+- Pre-game/post-game analysis
+- Halftime shows
+- Replays and highlights
+- Menus, loading screens, navigation interfaces
 
-OTHER: Non-sports content, menus, loading screens, social media
+IMPORTANT DISTINCTIONS:
+- In-stadium advertising (banners, field logos, jersey sponsors) = NON-AD (part of live game)
+- Commercial breaks interrupting the game = AD
+- Broadcaster logos (ESPN, FOX, etc.) = NON-AD (part of broadcast)
+- Full-screen product commercials = AD
 
 Platform-specific patterns:
-- ESPN/FOX/CBS: Network logo bugs, commercial fade-outs
-- Peacock/Hulu/Prime: Streaming service ad overlays
+- ESPN/FOX/CBS: Commercial fade-outs with "We'll be right back"
+- Peacock/Hulu/Prime: Streaming service ad overlays covering content
 - Free streams (StreamEast, Buffstreams): Pop-up ads, redirect overlays, suspicious "Download" buttons
 
-Response: {"classification": "ad|game|other", "confidence": 0-100, "reasoning": "specific visual elements seen"}
+Response: {"classification": "ad|non-ad", "confidence": 0-100, "reasoning": "specific visual elements seen"}
 
-REMEMBER: Ads interrupt sports viewing - prioritize ad detection even during live games.`;
+REMEMBER: Only classify as "ad" if there's an actual advertisement interrupting or covering the sports content. Live game footage with in-stadium advertising is "non-ad".`;
 
 // Generic fallback prompt
-const GENERIC_PROMPT = `Classify as "ad" or "other".
+const GENERIC_PROMPT = `You are an expert at identifying advertisements in website screenshots.
 
-Ad: Advertisements, sponsored content, promotional overlays, commercial breaks
-Other: All regular content including sports, entertainment, articles, videos
+Classify as "ad" or "non-ad".
 
-Response: {"classification": "ad|other", "confidence": 0-100, "reasoning": "brief"}`;
+AD: Advertisements, sponsored content interruptions, promotional overlays, commercial breaks, pop-up ads, video ads, interstitial ads
+
+NON-AD: All regular content including articles, videos, entertainment, sports, menus, navigation, actual website content, user-generated content
+
+Response: {"classification": "ad|non-ad", "confidence": 0-100, "reasoning": "brief"}`;
 
 // Site categorization
 const SITE_CATEGORIES = {
