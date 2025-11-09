@@ -71,7 +71,20 @@ class AutoMuteDetector {
       this.handleMessage(message, sender, sendResponse);
       return true; // Keep message channel open for async responses
     });
+    chrome.runtime.onStartup.addListener(() => {
+      console.log('Extension started');
+      this.loadClassificationHistory(); // <-- ADD THIS LINE
+    });
     
+    // Listen for extension install
+    chrome.runtime.onInstalled.addListener((details) => {
+      console.log('Extension installed/updated:', details.reason);
+      this.loadClassificationHistory(); // <-- ADD THIS LINE
+      if (details.reason === 'install') {
+        this.handleFirstInstall();
+      }
+    });
+
     // Listen for extension startup
     chrome.runtime.onStartup.addListener(() => {
       console.log('Extension started');
@@ -91,7 +104,38 @@ class AutoMuteDetector {
       this.cleanup();
     });
   }
-  
+  // logging method 
+  async loadClassificationHistory() {
+    try {
+      // Use the key already defined in constants.js
+      const key = CONFIG.STORAGE_KEYS.CLASSIFICATION_HISTORY;
+      const result = await chrome.storage.local.get([key]);
+      
+      if (result[key]) {
+        this.classificationHistory = result[key];
+        console.log(`Loaded ${this.classificationHistory.length} classification logs from storage`);
+      } else {
+        this.classificationHistory = [];
+        console.log('No classification logs found in storage.');
+      }
+    } catch (error) {
+      console.error('Failed to load classification history:', error);
+      this.classificationHistory = [];
+    }
+  }
+  // save the logs 
+  async saveClassificationHistory() {
+    try {
+      // The history array is already sliced to the max size
+      // in handleClassificationResult, so we just save it.
+      await chrome.storage.local.set({ 
+        [CONFIG.STORAGE_KEYS.CLASSIFICATION_HISTORY]: this.classificationHistory 
+      });
+    } catch (error) {
+      console.error('Failed to save classification history:', error);
+    }
+  }
+
   /**
    * Handle messages from popup and content scripts
    */
@@ -577,7 +621,21 @@ async handleClassificationResult(classification) {
     console.error('❌ Error handling classification result:', error);
     console.error('❌ Error stack:', error.stack);
   }
-}
+
+  this.classificationHistory.unshift(this.lastClassification);
+      if (this.classificationHistory.length > this.maxHistorySize) {
+        this.classificationHistory = this.classificationHistory.slice(0, this.maxHistorySize);
+      }
+      
+      await this.saveClassificationHistory(); // <-- ADD THIS LINE
+      
+      // ... (rest of the function: determining shouldMute, executing mute/unmute)
+      
+    } catch (error) {
+      console.error('❌ Error handling classification result:', error);
+  }
+  
+
 
   /**
    * ENHANCED shouldMuteForClassification with detailed logging
