@@ -11,6 +11,11 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# ADD THESE LINES to ignore your specific .env files
+.env.production
+.env.development
+*.env
+
 # Logs
 logs
 *.log
@@ -42,9 +47,6 @@ jspm_packages/
 # Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variables file
-.env
-
 # IDE files
 .vscode/
 .idea/
@@ -66,4 +68,4 @@ build/
 
 # Temporary files
 *.tmp
-*.temp 
+*.temp
