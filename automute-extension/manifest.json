@@ -3,35 +3,22 @@
   "name": "AutoMute",
   "version": "2.0.0",
   "permissions": [
-    "identity",
     "storage",
     "tabs",
-    "activeTab"
+    "activeTab",
+    "tabCapture" 
   ],
   "host_permissions": [
-    "https://accounts.spotify.com/*",
-    "https://api.spotify.com/*",
-    "https://automute-api-16091147188.us-central1.run.app/*"
+    "https://automute-api-16091147188.us-central1.run.app/*",
+    "<all_urls>"
   ],
-  "oauth2": {
-    "client_id": "216406c9336d4619851e1fa8c7b3ca84",
-    "scopes": [
-      "user-read-playback-state",
-      "user-modify-playback-state",
-      "user-read-currently-playing",
-      "playlist-read-private",
-      "playlist-read-collaborative",
-      "user-library-read",
-      "streaming"
-    ]
-  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "AutoMute with Spotify",
+    "default_title": "AutoMute",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -39,7 +26,7 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://automute-api-16091147188.us-central1.run.app https://accounts.spotify.com https://api.spotify.com"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://automute-api-16091147188.us-central1.run.app"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -48,12 +35,8 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "content/content.js"
-      ],
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
       "run_at": "document_idle"
     }
   ]

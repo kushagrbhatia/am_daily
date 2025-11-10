@@ -19,7 +19,7 @@ class ApiClient {
    * @param {Object} siteMetadata - Site metadata for prompt optimization
    * @returns {Promise<Object>} Classification result
    */
-  async classifyImage(base64Image, siteMetadata = {}) {  // CHANGED: Added siteMetadata parameter
+  async classifyImage(base64Image, siteMetadata = {}) {  
     try {
       console.log('Starting image classification via API');
       
@@ -33,11 +33,13 @@ class ApiClient {
         console.log(`Classifying image for site: ${siteMetadata.hostname}`);
       }
       
-      // Prepare request payload with metadata
+      // --- THIS IS THE FIX ---
+      // The backend expects 'image' and 'timestamp' at the top level,
+      // not inside a 'metadata' object.
       const payload = {
         image: base64Image,
-        metadata: siteMetadata,  // CHANGED: Include site metadata
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        ...siteMetadata // Spread metadata properties into the top level
       };
       
       // Make API request with retries
@@ -115,7 +117,7 @@ class ApiClient {
         
         // Don't retry on last attempt
         if (attempt === this.retryAttempts) {
-          throw error;
+          throw lastError;
         }
         
         // Calculate delay with exponential backoff
@@ -160,7 +162,7 @@ class ApiClient {
     const { classification, confidence } = response;
     
     // Update validation for new binary YouTube classification
-    const validClassifications = ['ad', 'game', 'other'];  // CHANGED: Keep all three for backward compatibility
+    const validClassifications = ['ad', 'game', 'other'];  
     
     // Validate classification
     if (!classification || !validClassifications.includes(classification)) {
