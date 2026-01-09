@@ -43,9 +43,19 @@ class ScreenshotManager {
         ...options
       };
       
+      const tab = await new Promise((resolve, reject) => {
+        chrome.tabs.get(tabId, (tabInfo) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(tabInfo);
+          }
+        });
+      });
+      
       // Capture the visible tab
       const dataUrl = await new Promise((resolve, reject) => {
-        chrome.tabs.captureVisibleTab(null, captureOptions, (dataUrl) => {
+        chrome.tabs.captureVisibleTab(tab.windowId, captureOptions, (dataUrl) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
           } else {
@@ -98,6 +108,18 @@ class ScreenshotManager {
     } finally {
       this.isCapturing = false;
     }
+  }
+
+  async getTabInfo(tabId) {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(tab);
+        }
+      });
+    });
   }
   
   /**
