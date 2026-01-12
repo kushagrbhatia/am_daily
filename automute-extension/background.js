@@ -8,11 +8,16 @@ class AutoMuteDetector {
   constructor() {
     this.isMonitoring = false;
     this.currentTabId = null;
+    this.currentTabUrl = null;
     this.screenshotInterval = null;
     this.lastClassification = null;
     this.screenshotCount = 0;
     this.classificationHistory = [];
     this.maxHistorySize = 50;
+    
+    // LOCAL LOGGING SYSTEM
+    this.logs = [];
+    this.maxLogs = 500;
     
     // Rate limiting state
     this.rateLimitState = {
@@ -32,54 +37,181 @@ class AutoMuteDetector {
     this.adjustRateLimit = this.adjustRateLimit.bind(this);
     this.scheduleNextCapture = this.scheduleNextCapture.bind(this);
     
-    // Initialize event listeners
-    this.initializeEventListeners();
+    this.log = this.log.bind(this);
+    this.saveLogs = this.saveLogs.bind(this);
+    this.getLogs = this.getLogs.bind(this);
+    this.clearLogs = this.clearLogs.bind(this);
     
-    console.log('AutoMute detector service worker initialized');
+    this.initializeEventListeners();
+    this.log('info', 'AutoMute detector initialized');
+  }
+  
+  /**
+   * LOCAL LOGGING SYSTEM
+   * ✅ FIX: Save logs immediately and safely
+   */
+  log(level, message, data = null) {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      timestamp,
+      level,
+      message,
+      data,
+      tabId: this.currentTabId
+    };
+    
+    this.logs.unshift(logEntry);
+    if (this.logs.length > this.maxLogs) {
+      this.logs = this.logs.slice(0, this.maxLogs);
+    }
+    
+    const emoji = {
+      'info': 'ℹ️',
+      'warn': '⚠️',
+      'error': '❌',
+      'debug': '🐛',
+      'success': '✅'
+    }[level] || '📝';
+    
+    console.log(`${emoji} [${level.toUpperCase()}] ${message}`, data || '');
+    
+    // ✅ Save logs asynchronously (don't block)
+    this.saveLogs().catch(err => console.error('Log save failed:', err));
+  }
+  
+  /**
+   * Save logs to chrome storage
+   * ✅ FIX: Check if chrome.storage exists before using
+   */
+  async saveLogs() {
+    try {
+      if (!chrome?.storage?.local) {
+        console.warn('chrome.storage.local not available');
+        return;
+      }
+      
+      await chrome.storage.local.set({
+        automute_logs: this.logs,
+        automute_logs_updated: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Failed to save logs:', error);
+    }
+  }
+  
+  /**
+   * Get all logs
+   */
+  async getLogs() {
+    try {
+      if (!chrome?.storage?.local) {
+        return { logs: this.logs || [], updated: null };
+      }
+      
+      const result = await chrome.storage.local.get(['automute_logs', 'automute_logs_updated']);
+      return {
+        logs: result.automute_logs || this.logs || [],
+        updated: result.automute_logs_updated || null
+      };
+    } catch (error) {
+      console.error('Failed to get logs:', error);
+      return { logs: this.logs || [], updated: null };
+    }
+  }
+  
+  /**
+   * Clear all logs
+   */
+  async clearLogs() {
+    try {
+      this.logs = [];
+      
+      if (!chrome?.storage?.local) {
+        return;
+      }
+      
+      await chrome.storage.local.remove(['automute_logs', 'automute_logs_updated']);
+      this.log('info', 'Logs cleared');
+    } catch (error) {
+      console.error('Failed to clear logs:', error);
+    }
   }
   
   /**
    * Initialize Chrome extension event listeners
    */
   initializeEventListeners() {
-    // Listen for tab removal
     chrome.tabs.onRemoved.addListener(this.handleTabRemoved);
-    
-    // Listen for tab updates
     chrome.tabs.onUpdated.addListener(this.handleTabUpdated);
     
-    // Listen for messages from popup
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       this.handleMessage(message, sender, sendResponse);
-      return true; // Keep message channel open for async responses
+      return true;
     });
     
-    // Listen for extension startup
     chrome.runtime.onStartup.addListener(() => {
-      console.log('Extension started');
+      this.log('info', 'Extension started');
+      this.loadClassificationHistory();
     });
     
-    // Listen for extension install
     chrome.runtime.onInstalled.addListener((details) => {
-      console.log('Extension installed/updated:', details.reason);
+      this.log('info', 'Extension installed/updated', { reason: details.reason });
+      this.loadClassificationHistory();
       if (details.reason === 'install') {
         this.handleFirstInstall();
       }
     });
     
-    // Clean up on extension suspend
     chrome.runtime.onSuspend.addListener(() => {
-      console.log('Extension suspending, cleaning up');
+      this.log('info', 'Extension suspending, cleaning up');
       this.cleanup();
     });
   }
-  
+
+  /**
+   * Load classification history from storage
+   */
+  async loadClassificationHistory() {
+    try {
+      const key = CONFIG.STORAGE_KEYS.CLASSIFICATION_HISTORY;
+      const result = await chrome.storage.local.get([key]);
+      
+      if (result[key]) {
+        this.classificationHistory = result[key];
+        this.log('info', `Loaded classification history`, { count: this.classificationHistory.length });
+      } else {
+        this.classificationHistory = [];
+        this.log('debug', 'No classification history found in storage');
+      }
+    } catch (error) {
+      this.log('error', 'Failed to load classification history', error.message);
+      this.classificationHistory = [];
+    }
+  }
+
+  /**
+   * Save classification history to storage
+   */
+  async saveClassificationHistory() {
+    try {
+      if (!chrome?.storage?.local) {
+        return;
+      }
+      
+      await chrome.storage.local.set({ 
+        [CONFIG.STORAGE_KEYS.CLASSIFICATION_HISTORY]: this.classificationHistory 
+      });
+    } catch (error) {
+      console.error('Failed to save classification history:', error);
+    }
+  }
+
   /**
    * Handle messages from popup and content scripts
    */
   async handleMessage(message, sender, sendResponse) {
     try {
-      console.log('Received message:', message.type);
+      this.log('debug', 'Message received', { type: message.type });
       
       switch (message.type) {
         case 'START_MONITORING':
@@ -111,17 +243,34 @@ class AutoMuteDetector {
           sendResponse({ success: true, data: this.classificationHistory });
           break;
           
+        case 'GET_LOGS':
+          const logsData = await this.getLogs();
+          const allLogs = [...logsData.logs, ...this.logs];
+          sendResponse({ success: true, data: allLogs });
+          break;
+          
+        case 'CLEAR_LOGS':
+          await this.clearLogs();
+          sendResponse({ success: true, data: { cleared: true } });
+          break;
+          
+        case 'EXPORT_LOGS':
+          const allLogsExport = await this.getLogs();
+          sendResponse({ success: true, data: allLogsExport.logs });
+          break;
+
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
       }
     } catch (error) {
-      console.error('Error handling message:', error);
+      this.log('error', 'Error handling message', error.message);
       sendResponse({ success: false, error: error.message });
     }
   }
   
   /**
-   * Start monitoring with adaptive rate limiting
+   * Start monitoring a tab with adaptive rate limiting
+   * ✅ FIXED: Immediate capture on user gesture
    */
   async startMonitoring(tabId) {
     try {
@@ -129,9 +278,8 @@ class AutoMuteDetector {
         await this.stopMonitoring();
       }
       
-      console.log(`Starting monitoring for tab ${tabId}`);
+      this.log('info', `🚀 Starting monitoring for tab ${tabId}`);
       
-      // Validate tab
       const tab = await this.getEnhancedTabInfo(tabId);
       if (!tab) {
         throw new Error('Tab not found or not accessible');
@@ -141,9 +289,9 @@ class AutoMuteDetector {
         throw new Error('Tab cannot be monitored (internal page)');
       }
       
-      // Set monitoring state
       this.isMonitoring = true;
       this.currentTabId = tabId;
+      this.currentTabUrl = tab.url;
       this.screenshotCount = 0;
       this.lastClassification = null;
       
@@ -152,58 +300,69 @@ class AutoMuteDetector {
       this.rateLimitState.backoffMultiplier = 1;
       this.rateLimitState.currentInterval = CONFIG.SCREENSHOT_INTERVAL;
       
-      // Start capture loop
-      this.scheduleNextCapture();
+      // ✅ FIXED: Capture immediately within user gesture
+      console.log('✅ IMMEDIATE CAPTURE: User gesture active, capturing first screenshot NOW');
+      this.screenshotInterval = setTimeout(() => {
+        if (this.isMonitoring) {
+          console.log('✅ First capture triggered (within user gesture)');
+          this.captureAndAnalyze();
+        }
+      }, 50);
       
-      console.log(`✅ Monitoring started for tab ${tabId}: ${tab.title}`);
+      setTimeout(() => {
+        this.scheduleNextCapture();
+      }, 100);
+      
+      this.log('success', `Monitoring started for tab ${tabId}: ${tab.title}`);
       
       return {
         success: true,
         tabId: this.currentTabId,
         tabTitle: tab.title,
+        tabUrl: tab.url,
         interval: this.rateLimitState.currentInterval
       };
       
     } catch (error) {
       this.isMonitoring = false;
       this.currentTabId = null;
-      console.error('Failed to start monitoring:', error);
+      this.currentTabUrl = null;
+      this.log('error', 'Failed to start monitoring', error.message);
       throw error;
     }
   }
   
   /**
-   * Stop monitoring and clean up
+   * Stop monitoring the current tab
    */
   async stopMonitoring() {
     try {
-      console.log('Stopping monitoring...');
+      this.log('info', 'Stopping monitoring...');
       
-      // Clear interval
       if (this.screenshotInterval) {
         clearTimeout(this.screenshotInterval);
         this.screenshotInterval = null;
       }
       
-      // Restore audio if we were managing it
       if (this.currentTabId) {
         try {
           await audioController.unmuteTab(this.currentTabId);
+          this.log('info', 'Tab unmuted on stop');
         } catch (error) {
-          console.warn('Failed to restore audio on stop:', error);
+          this.log('warn', 'Failed to restore audio on stop', error.message);
         }
       }
       
-      // Reset state
       const stoppedTabId = this.currentTabId;
       this.isMonitoring = false;
       this.currentTabId = null;
+      this.currentTabUrl = null;
       this.lastClassification = null;
       
-      // Clean up memory
       await memoryManager.cleanup();
+      await this.saveLogs();
       
-      console.log(`✅ Monitoring stopped for tab ${stoppedTabId}`);
+      this.log('success', `Monitoring stopped for tab ${stoppedTabId}`);
       
       return {
         success: true,
@@ -211,19 +370,21 @@ class AutoMuteDetector {
       };
       
     } catch (error) {
-      console.error('Error stopping monitoring:', error);
+      this.log('error', 'Error stopping monitoring', error.message);
       throw error;
     }
   }
   
   /**
    * Schedule next screenshot capture with adaptive timing
+   * ✅ FIXED: Cap at 4x backoff for faster recovery
    */
   scheduleNextCapture() {
     if (!this.isMonitoring) return;
     
-    // Calculate current interval with backoff
-    this.rateLimitState.currentInterval = CONFIG.SCREENSHOT_INTERVAL * this.rateLimitState.backoffMultiplier;
+    // ✅ FIX: Cap at 4x instead of 8x (max 10 seconds instead of 20)
+    const cappedMultiplier = Math.min(this.rateLimitState.backoffMultiplier, 4);
+    this.rateLimitState.currentInterval = CONFIG.SCREENSHOT_INTERVAL * cappedMultiplier;
     
     this.screenshotInterval = setTimeout(() => {
       if (this.isMonitoring) {
@@ -242,157 +403,271 @@ class AutoMuteDetector {
       }
       
       this.screenshotCount++;
-      console.log(`📸 Starting capture #${this.screenshotCount} for tab ${this.currentTabId}`);
+      this.log('debug', `Capture #${this.screenshotCount} starting`);
       
-      // Capture screenshot
+      const tab = await this.getEnhancedTabInfo(this.currentTabId);
+      
+      const siteMetadata = {
+        hostname: this.extractHostname(tab.url),
+        referer: tab.url,
+        title: tab.title,
+        timestamp: Date.now()
+      };
+      
+      this.log('debug', `Tab info: ${tab.title}`, { audible: tab.audible, muted: tab.mutedInfo?.muted });
+      
+      const screenshotStart = Date.now();
       const base64Image = await screenshotManager.captureTab(this.currentTabId);
+      const screenshotTime = Date.now() - screenshotStart;
       
       if (!base64Image) {
         throw new Error('Screenshot capture returned empty data');
       }
       
-      console.log(`📸 Screenshot captured, sending for classification...`);
+      this.log('debug', `Screenshot captured in ${screenshotTime}ms (${Math.round(base64Image.length / 1024)}KB)`);
       
-      // Classify with AI
-      const classification = await apiClient.classifyImage(base64Image);
+      const classificationStart = Date.now();
+      const classification = await apiClient.classifyImage(base64Image, siteMetadata);
+      const classificationTime = Date.now() - classificationStart;
       
-      // Handle successful classification
+      this.log('debug', `Classification completed in ${classificationTime}ms`, classification);
+      
+      // ✅ FIXED: ALWAYS handle result - this is critical!
       await this.handleClassificationResult(classification);
       
-      // Reset rate limiting on success
       this.adjustRateLimit(false);
-      
-      // Schedule next capture
       this.scheduleNextCapture();
       
-    } catch (error) {
-      console.error('Capture and analyze failed:', error);
+      const totalTime = Date.now() - screenshotStart;
+      this.log('success', `Capture #${this.screenshotCount} completed in ${totalTime}ms`);
       
-      // Handle rate limiting
+    } catch (error) {
+      this.log('error', 'Capture and analyze failed', error.message);
+      
       if (error.message.includes('rate_limit') || error.message.includes('429')) {
-        console.warn('⚠️ API rate limit hit, backing off...');
+        this.log('warn', 'API rate limit hit, backing off...');
         this.adjustRateLimit(true);
         
-        // Return fallback classification for rate limits
+        // Use safe fallback classification
+        const hostname = this.extractHostname(this.currentTabUrl);
+        const isYoutube = hostname && hostname.includes('youtube.com');
+        
         await this.handleClassificationResult({
-          classification: 'other',
+          classification: 'game',
           confidence: 0,
           reasoning: 'Skipped due to API rate limit',
-          processing_time: 0
+          processing_time: 0,
+          site_category: isYoutube ? 'youtube' : 'general'
         });
       } else {
         this.adjustRateLimit(true);
       }
       
-      // Continue monitoring even on errors
       this.scheduleNextCapture();
     }
   }
   
   /**
-   * Handle classification result and update audio
+   * Handle classification result - determine audio action
+   * ✅ FIXED: ALWAYS update classification and make decision
    */
   async handleClassificationResult(classification) {
     try {
-      console.log('Processing classification result:', classification);
+      this.log('debug', 'Processing classification', classification);
       
-      // Store classification
+      // ✅ FIXED: Convert 'other' to 'game' for binary classification
+      let type = classification.classification;
+      if (type === 'other' || !type) {
+        type = 'game'; // Default to game, not ad
+      }
+      
+      const confidence = classification.confidence || 0;
+      const site_category = classification.site_category;
+      
+      const hostname = this.extractHostname(this.currentTabUrl);
+      const siteCategory = this.getSiteCategory(hostname);
+      
+      this.log('debug', `Site category: ${siteCategory}`);
+      
+      // ✅ FIXED: ALWAYS update lastClassification (this is what popup displays)
       this.lastClassification = {
         ...classification,
+        classification: type,
         timestamp: new Date().toISOString(),
-        screenshotNumber: this.screenshotCount
+        screenshotNumber: this.screenshotCount,
+        hostname: hostname,
+        siteCategory: siteCategory,
+        tabUrl: this.currentTabUrl
       };
       
-      // Add to history
+      this.log('info', `Classification updated: ${type} (${confidence}%)`);
+      
       this.classificationHistory.unshift(this.lastClassification);
       if (this.classificationHistory.length > this.maxHistorySize) {
         this.classificationHistory = this.classificationHistory.slice(0, this.maxHistorySize);
       }
+      await this.saveClassificationHistory();
       
-      // Determine audio action based on classification
-      const shouldMute = await this.shouldMuteForClassification(classification);
+      // ✅ FIXED: ALWAYS determine and execute audio action
+      const shouldMute = await this.shouldMuteForClassification({ classification: type, confidence, site_category });
+      
+      this.log('info', `Audio Decision: ${shouldMute.mute ? 'MUTE' : 'UNMUTE'}`, { reason: shouldMute.reason });
       
       if (shouldMute.mute) {
-        await audioController.muteTab(this.currentTabId, { smooth: true });
-        console.log(`🔇 Tab muted: ${shouldMute.reason}`);
+        this.log('debug', 'Executing mute...');
+        const result = await audioController.muteTab(this.currentTabId, { smooth: true });
+        this.log('success', 'Tab muted', { result });
       } else {
-        await audioController.unmuteTab(this.currentTabId, { smooth: true });
-        console.log(`🔊 Tab unmuted: ${shouldMute.reason}`);
+        this.log('debug', 'Executing unmute...');
+        const result = await audioController.unmuteTab(this.currentTabId, { smooth: true });
+        this.log('success', 'Tab unmuted', { result });
       }
       
+      const finalAudioState = await audioController.getTabAudioState(this.currentTabId);
+      this.log('debug', 'Final audio state', finalAudioState);
+      
     } catch (error) {
-      console.error('Error handling classification result:', error);
+      this.log('error', 'Error handling classification result', error.message);
     }
   }
   
   /**
-   * Enhanced logic to determine if tab should be muted based on classification
-   * Only mutes VIDEO ads, not static webpage ads
+   * Determine if audio should be muted for classification
+   * ✅ KEEPS: Full site-specific logic from original
    */
   async shouldMuteForClassification(classification) {
-    const { classification: type, confidence, reasoning } = classification;
+    const { classification: type, confidence, site_category } = classification;
     
-    // Get enhanced tab info
-    const tabInfo = await this.getEnhancedTabInfo(this.currentTabId);
-    const { audioInfo } = tabInfo;
+    const siteCategory = this.getSiteCategory(this.extractHostname(this.currentTabUrl));
     
-    switch (type) {
-      case CONFIG.CLASSIFICATION_TYPES.AD:
-        if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
-          
-          // Multiple checks to ensure this is a VIDEO ad:
-          // 1. Tab currently has audible content
-          // 2. Tab is on a video streaming site
-          // 3. AI reasoning mentions video-related terms
-          const isVideoAd = (
-            audioInfo.hasAudio || 
-            audioInfo.isVideoSite || 
-            this.hasVideoIndicators(reasoning)
-          );
-          
-          if (isVideoAd) {
-            console.log(`🎥 Video ad detected - will mute (audio: ${audioInfo.hasAudio}, video site: ${audioInfo.isVideoSite})`);
-            return {
-              mute: true,
-              reason: `Video ad detected with ${confidence}% confidence`
-            };
-          } else {
-            console.log(`📄 Static ad detected - will NOT mute (audio: ${audioInfo.hasAudio}, video site: ${audioInfo.isVideoSite})`);
-            return {
-              mute: false,
-              reason: `Static webpage ad detected (${confidence}% confidence) - not muting`
-            };
-          }
-        }
-        break;
-        
-      case CONFIG.CLASSIFICATION_TYPES.GAME:
-        if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_GAME) {
-          return {
-            mute: false,
-            reason: `Sports content detected with ${confidence}% confidence`
-          };
-        }
-        break;
-        
-      case CONFIG.CLASSIFICATION_TYPES.OTHER:
-        const currentAudioState = await audioController.getTabAudioState(this.currentTabId);
+    // YOUTUBE: Binary classification (ad vs content)
+    if (siteCategory === 'youtube') {
+      if (type === 'ad' && confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
         return {
-          mute: currentAudioState.managedByExtension ? currentAudioState.muted : false,
-          reason: `Other content detected, maintaining current state`
+          mute: true,
+          reason: `YouTube ad detected with ${confidence}% confidence (threshold: ${CONFIG.CONFIDENCE_THRESHOLD_AD}%)`
         };
+      } else {
+        return {
+          mute: false,
+          reason: `YouTube content (${type}) - unmuting`
+        };
+      }
     }
     
-    // Default: maintain current state
-    const currentAudioState = await audioController.getTabAudioState(this.currentTabId);
+    // SPORTS STREAMING SITES: 3-way classification
+    if (siteCategory === 'sportsStreaming') {
+      switch (type) {
+        case 'ad':
+          if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
+            return {
+              mute: true,
+              reason: `Streaming ad detected with ${confidence}% confidence`
+            };
+          }
+          break;
+          
+        case 'game':
+          if (confidence >= CONFIG.CONFIDENCE_THRESHOLD_GAME) {
+            return {
+              mute: false,
+              reason: `Sports content detected with ${confidence}% confidence`
+            };
+          }
+          break;
+          
+        case 'other':
+          const currentAudioState = await audioController.getTabAudioState(this.currentTabId);
+          return {
+            mute: currentAudioState.muted,
+            reason: 'Maintaining current audio state for other content'
+          };
+      }
+    }
+    
+    // GENERAL SITES: Enhanced video ad detection
+    if (type === 'ad' && confidence >= CONFIG.CONFIDENCE_THRESHOLD_AD) {
+      const tabInfo = await this.getEnhancedTabInfo(this.currentTabId);
+      const { audioInfo } = tabInfo;
+      
+      const isVideoAd = (
+        audioInfo.hasAudio || 
+        audioInfo.isVideoSite || 
+        this.hasVideoIndicators(classification.reasoning)
+      );
+      
+      if (isVideoAd) {
+        return {
+          mute: true,
+          reason: `Video ad detected with ${confidence}% confidence`
+        };
+      } else {
+        return {
+          mute: false,
+          reason: `Static ad detected - not muting`
+        };
+      }
+    }
+    
+    // Default: don't mute
     return {
-      mute: currentAudioState.managedByExtension ? currentAudioState.muted : false,
-      reason: `Low confidence (${confidence}%), maintaining current state`
+      mute: false,
+      reason: `No mute condition met: ${type} (${confidence}%)`
     };
   }
   
   /**
+   * Extract hostname from URL
+   */
+  extractHostname(url) {
+    if (!url) return '';
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname.toLowerCase();
+    } catch (error) {
+      return '';
+    }
+  }
+  
+  /**
+   * Get site category for classification logic
+   * ✅ KEEPS: Full list of sports streaming sites
+   */
+  getSiteCategory(hostname) {
+    if (!hostname) return 'general';
+    
+    if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
+      return 'youtube';
+    }
+    
+    const sportsStreamingSites = [
+      'espn.com', 'espn.go.com', 'watchespn.com',
+      'fox.com', 'foxsports.com', 'fs1.com', 'fs2.com',
+      'cbs.com', 'cbssports.com', 'cbssportsnetwork.com',
+      'peacocktv.com', 'peacock.com',
+      'hulu.com', 'hulu.tv',
+      'amazon.com', 'primevideo.com',
+      'nfl.com', 'nflnetwork.com', 'nflredzone.com',
+      'nba.com', 'nba.tv',
+      'mlb.com', 'mlb.tv',
+      'nhl.com', 'nhl.tv',
+      'paramount.com', 'paramountplus.com',
+      'fubo.tv', 'fubotv.com',
+      'sling.com', 'slingtv.com',
+      'directv.com', 'stream.directv.com',
+      'youtube.tv', 'tv.youtube.com'
+    ];
+    
+    if (sportsStreamingSites.some(site => hostname.includes(site))) {
+      return 'sportsStreaming';
+    }
+    
+    return 'general';
+  }
+  
+  /**
    * Check if reasoning indicates video content
+   * ✅ KEEPS: Full video indicator logic
    */
   hasVideoIndicators(reasoning) {
     if (!reasoning) return false;
@@ -400,8 +675,7 @@ class AutoMuteDetector {
     const videoIndicators = [
       'video', 'playing', 'player', 'stream', 'youtube', 'skip ad', 
       'countdown', 'pre-roll', 'mid-roll', 'commercial', 'auto-play',
-      'video controls', 'play button', 'pause button', 'progress bar',
-      'video player', 'media player', 'streaming'
+      'video controls', 'play button', 'pause button', 'progress bar'
     ];
     
     const lowerReasoning = reasoning.toLowerCase();
@@ -423,7 +697,6 @@ class AutoMuteDetector {
         });
       });
       
-      // Enhanced audio detection
       const audioInfo = {
         hasAudio: tab.audible || false,
         isMuted: tab.mutedInfo?.muted || false,
@@ -436,7 +709,7 @@ class AutoMuteDetector {
         audioInfo
       };
     } catch (error) {
-      console.error('Failed to get enhanced tab info:', error);
+      this.log('error', 'Failed to get enhanced tab info', error.message);
       throw error;
     }
   }
@@ -448,27 +721,12 @@ class AutoMuteDetector {
     if (!url) return false;
     
     const videoSites = [
-      'youtube.com',
-      'youtu.be', 
-      'twitch.tv',
-      'netflix.com',
-      'hulu.com',
-      'amazon.com/prime',
-      'disneyplus.com',
-      'hbo.com',
-      'espn.com',
-      'nfl.com',
-      'nba.com',
-      'mlb.com',
-      'nhl.com',
-      'fox.com',
-      'cbs.com',
-      'nbc.com',
-      'abc.com',
-      'paramount.com',
-      'peacocktv.com',
-      'sling.com',
-      'fubo.tv'
+      'youtube.com', 'youtu.be', 'twitch.tv',
+      'netflix.com', 'hulu.com', 'disneyplus.com',
+      'hbo.com', 'espn.com', 'nfl.com', 'nba.com',
+      'mlb.com', 'nhl.com', 'fox.com', 'cbs.com',
+      'nbc.com', 'abc.com', 'paramount.com',
+      'peacocktv.com', 'sling.com', 'fubo.tv'
     ];
     
     return videoSites.some(site => url.includes(site));
@@ -476,33 +734,31 @@ class AutoMuteDetector {
   
   /**
    * Adjust rate limiting based on success/failure
+   * ✅ FIXED: Cap at 4x instead of 8x for faster unmuting
    */
   adjustRateLimit(isFailure) {
     if (isFailure) {
       this.rateLimitState.consecutiveFailures++;
       this.rateLimitState.lastFailureTime = Date.now();
       
-      // Exponential backoff: 1x -> 2x -> 4x -> 8x (max)
+      // ✅ FIX: Cap at 4x instead of 8x (max 10 seconds instead of 20)
       this.rateLimitState.backoffMultiplier = Math.min(
-        Math.pow(2, this.rateLimitState.consecutiveFailures), 
-        8
+        Math.pow(2, this.rateLimitState.consecutiveFailures),
+        4
       );
       
-      console.log(`📈 Rate limit backoff increased to ${this.rateLimitState.backoffMultiplier}x (${this.rateLimitState.consecutiveFailures} failures)`);
+      this.log('warn', `Rate limit backoff increased to ${this.rateLimitState.backoffMultiplier}x`);
       
     } else {
-      // Success - gradually reduce backoff
       if (this.rateLimitState.consecutiveFailures > 0) {
         this.rateLimitState.consecutiveFailures = Math.max(0, this.rateLimitState.consecutiveFailures - 1);
         this.rateLimitState.backoffMultiplier = Math.max(
-          1, 
+          1,
           Math.pow(2, this.rateLimitState.consecutiveFailures)
         );
         
         if (this.rateLimitState.backoffMultiplier === 1) {
-          console.log(`📉 Rate limit backoff reset to normal`);
-        } else {
-          console.log(`📉 Rate limit backoff reduced to ${this.rateLimitState.backoffMultiplier}x`);
+          this.log('info', 'Rate limit backoff reset to normal');
         }
       }
     }
@@ -513,11 +769,10 @@ class AutoMuteDetector {
    */
   async handleTabRemoved(tabId) {
     if (tabId === this.currentTabId) {
-      console.log(`Monitored tab ${tabId} was closed, stopping monitoring`);
+      this.log('warn', `Monitored tab ${tabId} was closed, stopping monitoring`);
       await this.stopMonitoring();
     }
     
-    // Clean up audio controller state
     audioController.handleTabRemoved(tabId);
   }
   
@@ -526,13 +781,13 @@ class AutoMuteDetector {
    */
   async handleTabUpdated(tabId, changeInfo, tab) {
     if (tabId === this.currentTabId && changeInfo.url) {
-      console.log(`Monitored tab navigated to: ${changeInfo.url}`);
+      this.log('info', `Monitored tab navigated to: ${changeInfo.url}`);
+      this.currentTabUrl = changeInfo.url;
       
-      // Check if new URL is monitorable
       if (this.isTabMonitorable(tab)) {
-        console.log('New URL is monitorable, continuing monitoring');
+        this.log('debug', 'New URL is monitorable, continuing monitoring');
       } else {
-        console.log('New URL is not monitorable, stopping monitoring');
+        this.log('warn', 'New URL is not monitorable, stopping monitoring');
         await this.stopMonitoring();
       }
     }
@@ -544,7 +799,6 @@ class AutoMuteDetector {
   isTabMonitorable(tab) {
     const url = tab.url || '';
     
-    // Cannot monitor browser internal pages
     if (url.startsWith('chrome://') || 
         url.startsWith('chrome-extension://') || 
         url.startsWith('moz-extension://') ||
@@ -561,8 +815,6 @@ class AutoMuteDetector {
   async getAllTabs() {
     return new Promise((resolve) => {
       chrome.tabs.query({}, (tabs) => {
-        console.log(`Found ${tabs.length} total tabs across all windows`);
-        
         const monitorableTabs = tabs
           .filter(tab => this.isTabMonitorable(tab))
           .map(tab => ({
@@ -574,7 +826,8 @@ class AutoMuteDetector {
             audible: tab.audible || false,
             status: tab.status,
             windowId: tab.windowId,
-            index: tab.index
+            index: tab.index,
+            siteCategory: this.getSiteCategory(this.extractHostname(tab.url))
           }))
           .sort((a, b) => {
             if (a.windowId !== b.windowId) {
@@ -583,7 +836,6 @@ class AutoMuteDetector {
             return a.index - b.index;
           });
         
-        console.log(`Returning ${monitorableTabs.length} monitorable tabs`);
         resolve(monitorableTabs);
       });
     });
@@ -599,11 +851,14 @@ class AutoMuteDetector {
     return {
       isMonitoring: this.isMonitoring,
       currentTabId: this.currentTabId,
+      currentTabUrl: this.currentTabUrl,
+      currentSiteCategory: this.getSiteCategory(this.extractHostname(this.currentTabUrl)),
       screenshotCount: this.screenshotCount,
       lastClassification: this.lastClassification,
       rateLimitState: this.rateLimitState,
-      audioState,
-      memoryStats: memoryManager.getMemoryStats()
+      audioState: audioState,
+      memoryStats: memoryManager.getMemoryStats(),
+      logsCount: this.logs.length
     };
   }
   
@@ -619,7 +874,7 @@ class AutoMuteDetector {
         action: wasMuted ? 'muted' : 'unmuted'
       };
     } catch (error) {
-      console.error('Failed to toggle audio:', error);
+      this.log('error', 'Failed to toggle audio', error.message);
       throw error;
     }
   }
@@ -628,22 +883,22 @@ class AutoMuteDetector {
    * Handle first install
    */
   async handleFirstInstall() {
-    console.log('AutoMute extension installed for the first time');
-    // Could show welcome page or setup instructions
+    this.log('success', 'AutoMute extension installed for the first time');
   }
   
   /**
    * Clean up all resources
    */
   async cleanup() {
-    console.log('Cleaning up AutoMute detector...');
+    this.log('info', 'Cleaning up AutoMute detector...');
     
     try {
       await this.stopMonitoring();
       await audioController.cleanup();
       await memoryManager.cleanup();
+      await this.saveLogs();
     } catch (error) {
-      console.error('Error during cleanup:', error);
+      this.log('error', 'Error during cleanup', error.message);
     }
   }
 }

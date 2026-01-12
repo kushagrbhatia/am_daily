@@ -5,6 +5,7 @@ class PopupController {
     this.currentStatus = null;
     this.selectedTabId = null;
     this.isInitialized = false;
+    this.currentLogs = [];
     
     // Bind methods
     this.initialize = this.initialize.bind(this);
@@ -26,7 +27,7 @@ class PopupController {
    */
   async initialize() {
     try {
-      console.log('Initializing AutoMute popup...');
+      console.log('Initializing AutoMute popup with logging...');
       
       // Get DOM elements
       this.elements = {
@@ -40,8 +41,14 @@ class PopupController {
         audioStatusText: document.getElementById('audioStatusText')
       };
       
-      // Add start/stop button to the popup
+      // Create classification display area (the green box!)
+      this.createClassificationDisplay();
+      
+      // Create start/stop button
       this.createStartStopButton();
+      
+      // Create logs viewer
+      this.createLogsViewer();
       
       // Test connections
       await this.testBackgroundConnection();
@@ -53,6 +60,12 @@ class PopupController {
       // Load tabs
       await this.loadTabs();
       
+      // Set up auto-refresh
+      this.startDebugRefresh();
+      
+      // Periodic status updates
+      this.startPeriodicUpdates();
+      
       this.isInitialized = true;
       console.log('AutoMute popup initialized successfully');
       
@@ -61,35 +74,266 @@ class PopupController {
       this.showError('Failed to initialize extension popup');
     }
   }
-  
+
   /**
-   * Create start/stop button
+   * Create classification display (the green box!)
    */
-  createStartStopButton() {
-    // Add button after tab list
-    const controlsHtml = `
-      <div id="controlsSection" style="padding: 16px; border-bottom: 1px solid #e8eaed; display: none;">
-        <h2 style="font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #202124;">Controls</h2>
-        <button id="startStopBtn" style="
-          width: 100%;
-          padding: 8px 16px;
-          border: 1px solid #1a73e8;
-          border-radius: 4px;
-          background: #1a73e8;
-          color: white;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        ">Start AutoMuting</button>
-        <div id="currentTabInfo" style="
-          margin-top: 12px;
-          padding: 8px 12px;
+  createClassificationDisplay() {
+    const headerArea = document.querySelector('.header');
+    
+    if (!headerArea) {
+      console.warn('Could not find header area for classification display');
+      return;
+    }
+    
+    const classificationHtml = `
+      <div id="classificationDisplay" style="
+        margin: 16px;
+        padding: 16px;
+        background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+        border: 2px solid #4caf50;
+        border-radius: 8px;
+        min-height: 60px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        box-shadow: 0 2px 8px rgba(76, 175, 80, 0.2);
+        font-weight: bold;
+      ">
+        <div style="display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center;">
+          <span id="classificationEmoji" style="font-size: 24px;">👁️</span>
+          <div style="text-align: center;">
+            <div id="classificationText" style="
+              font-size: 16px;
+              color: #2e7d32;
+              font-weight: bold;
+              min-height: 24px;
+            ">Waiting for classification...</div>
+            <div id="confidenceText" style="
+              font-size: 12px;
+              color: #558b2f;
+              margin-top: 4px;
+              min-height: 18px;
+            ">---</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    const classificationDiv = document.createElement('div');
+    classificationDiv.innerHTML = classificationHtml;
+    headerArea.parentNode.insertBefore(classificationDiv, headerArea.nextSibling);
+    
+    this.elements = { ...this.elements,
+      classificationDisplay: document.getElementById('classificationDisplay'),
+      classificationText: document.getElementById('classificationText'),
+      classificationEmoji: document.getElementById('classificationEmoji'),
+      confidenceText: document.getElementById('confidenceText')
+    };
+  }
+
+  /**
+   * Update classification display
+   */
+  updateClassificationDisplay(classification) {
+    if (!this.elements.classificationText || !this.currentStatus?.isMonitoring) {
+      return;
+    }
+    
+    const { classification: type, confidence } = classification;
+    
+    // Set emoji based on classification
+    const emojis = {
+      'ad': '📢',
+      'game': '🎮',
+      'other': '👁️'
+    };
+    
+    this.elements.classificationEmoji.textContent = emojis[type] || '👁️';
+    
+    // Set color based on confidence
+    let color = '#2e7d32'; // Green for high confidence
+    if (confidence < CONFIG.CONFIDENCE_THRESHOLD_AD) {
+      color = '#f57c00'; // Orange for medium confidence
+    }
+    
+    this.elements.classificationText.textContent = `${type.toUpperCase()}`;
+    this.elements.classificationText.style.color = color;
+    
+    this.elements.confidenceText.textContent = `Confidence: ${confidence}% (Threshold: ${CONFIG.CONFIDENCE_THRESHOLD_AD}%)`;
+    this.elements.confidenceText.style.color = color;
+    
+    // Also update the background color based on what action was taken
+    if (this.currentStatus.lastClassification?.shouldMute) {
+      this.elements.classificationDisplay.style.background = 'linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%)';
+      this.elements.classificationDisplay.style.borderColor = '#f44336';
+      this.elements.classificationEmoji.textContent = '🔇';
+      this.elements.classificationText.style.color = '#c62828';
+      this.elements.confidenceText.style.color = '#c62828';
+    }
+  }
+
+  /**
+   * Create logs viewer
+   */
+  createLogsViewer() {
+    const logsHtml = `
+      <div id="logsSection" style="padding: 16px; border-bottom: 1px solid #e8eaed; display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h2 style="font-size: 14px; font-weight: 500; color: #202124; margin: 0;">📋 Logs</h2>
+          <div style="display: flex; gap: 6px;">
+            <button id="toggleLogs" style="background: none; border: 1px solid #dadce0; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer;">Hide</button>
+            <button id="clearLogsBtn" style="background: none; border: 1px solid #dadce0; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer;">Clear</button>
+            <button id="exportLogsBtn" style="background: #1967d2; color: white; border: 1px solid #1967d2; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer;">Export</button>
+          </div>
+        </div>
+        
+        <div id="logsContainer" style="
+          max-height: 300px;
+          overflow-y: auto;
           background: #f8f9fa;
           border-radius: 4px;
+          padding: 8px;
+          font-family: 'Courier New', monospace;
+          font-size: 10px;
+          line-height: 1.4;
           border: 1px solid #e8eaed;
-          display: none;
         ">
+          <div style="color: #5f6368; text-align: center; padding: 20px;">
+            No logs yet. Start monitoring to see logs.
+          </div>
+        </div>
+        
+        <div style="margin-top: 8px; font-size: 10px; color: #5f6368;">
+          <span id="logsCount">0 logs</span> | 
+          <span id="logsUpdated">Not updated</span>
+        </div>
+      </div>
+    `;
+    
+    const tabList = document.getElementById('tabList');
+    if (tabList?.parentNode) {
+      const logsDiv = document.createElement('div');
+      logsDiv.innerHTML = logsHtml;
+      tabList.parentNode.insertBefore(logsDiv, tabList.nextSibling);
+      
+      this.elements = { ...this.elements,
+        logsSection: document.getElementById('logsSection'),
+        logsContainer: document.getElementById('logsContainer'),
+        toggleLogs: document.getElementById('toggleLogs'),
+        clearLogsBtn: document.getElementById('clearLogsBtn'),
+        exportLogsBtn: document.getElementById('exportLogsBtn'),
+        logsCount: document.getElementById('logsCount'),
+        logsUpdated: document.getElementById('logsUpdated')
+      };
+      
+      this.elements.toggleLogs.addEventListener('click', () => {
+        const isVisible = this.elements.logsSection.style.display !== 'none';
+        this.elements.logsSection.style.display = isVisible ? 'none' : 'block';
+        this.elements.toggleLogs.textContent = isVisible ? 'Show' : 'Hide';
+      });
+      
+      this.elements.clearLogsBtn.addEventListener('click', () => this.clearLogs());
+      this.elements.exportLogsBtn.addEventListener('click', () => this.exportLogs());
+    }
+  }
+
+  /**
+   * Update logs display
+   */
+  async updateLogsDisplay() {
+    try {
+      const response = await this.sendMessage({ type: 'GET_LOGS' });
+      
+      if (!response.success || !response.data) {
+        return;
+      }
+      
+      this.currentLogs = response.data;
+      
+      if (this.currentLogs.length === 0) {
+        this.elements.logsContainer.innerHTML = '<div style="color: #5f6368; text-align: center; padding: 20px;">No logs yet.</div>';
+        return;
+      }
+      
+      // Show logs
+      let html = '';
+      for (let i = 0; i < Math.min(50, this.currentLogs.length); i++) {
+        const log = this.currentLogs[i];
+        const emoji = {
+          'info': 'ℹ️',
+          'warn': '⚠️',
+          'error': '❌',
+          'debug': '🐛',
+          'success': '✅'
+        }[log.level] || '📝';
+        
+        const dataStr = log.data ? ` ${JSON.stringify(log.data)}` : '';
+        html += `<div style="color: #5f6368; margin-bottom: 2px;">${emoji} [${log.level.toUpperCase()}] ${log.message}${dataStr}</div>`;
+      }
+      
+      this.elements.logsContainer.innerHTML = html;
+      this.elements.logsCount.textContent = `${this.currentLogs.length} logs`;
+      this.elements.logsUpdated.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+      
+    } catch (error) {
+      console.error('Failed to update logs:', error);
+    }
+  }
+
+  /**
+   * Clear logs
+   */
+  async clearLogs() {
+    if (!confirm('Clear all logs?')) return;
+    
+    try {
+      await this.sendMessage({ type: 'CLEAR_LOGS' });
+      this.currentLogs = [];
+      this.elements.logsContainer.innerHTML = '<div style="color: #5f6368; text-align: center; padding: 20px;">Logs cleared.</div>';
+      this.elements.logsCount.textContent = '0 logs';
+    } catch (error) {
+      console.error('Failed to clear logs:', error);
+    }
+  }
+
+  /**
+   * Export logs to file
+   */
+  async exportLogs() {
+    try {
+      const response = await this.sendMessage({ type: 'EXPORT_LOGS' });
+      
+      if (!response.success || !response.data) {
+        alert('No logs to export');
+        return;
+      }
+      
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `automute-logs-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      console.log('Logs exported successfully');
+    } catch (error) {
+      console.error('Failed to export logs:', error);
+      alert('Failed to export logs');
+    }
+  }
+
+  /**
+   * Create start/stop monitoring button
+   */
+  createStartStopButton() {
+    const controlsHtml = `
+      <div id="controlsSection" style="padding: 16px; border-bottom: 1px solid #e8eaed; display: none;">
+        <h2 style="font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #202124;">Monitoring Controls</h2>
+        <button id="startStopBtn" style="width: 100%; padding: 8px 16px; border: 1px solid #1a73e8; border-radius: 4px; background: #1a73e8; color: white; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;">Start AutoMuting</button>
+        <div id="currentTabInfo" style="margin-top: 12px; padding: 8px 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #e8eaed; display: none;">
           <div style="display: flex; align-items: center;">
             <img id="currentTabFavicon" style="width: 16px; height: 16px; margin-right: 8px;" src="" alt="">
             <span id="currentTabTitle" style="font-size: 12px; color: #202124;">No tab selected</span>
@@ -97,66 +341,54 @@ class PopupController {
         </div>
       </div>
     `;
-    
-    // Insert controls after tab list
     const tabList = document.getElementById('tabList');
-    if (tabList && tabList.parentNode) {
+    if (tabList?.parentNode) {
       const controlsDiv = document.createElement('div');
       controlsDiv.innerHTML = controlsHtml;
       tabList.parentNode.insertBefore(controlsDiv, tabList.nextSibling);
-      
-      // Store references to new elements
-      this.elements.controlsSection = document.getElementById('controlsSection');
-      this.elements.startStopBtn = document.getElementById('startStopBtn');
-      this.elements.currentTabInfo = document.getElementById('currentTabInfo');
-      this.elements.currentTabFavicon = document.getElementById('currentTabFavicon');
-      this.elements.currentTabTitle = document.getElementById('currentTabTitle');
-      
-      // Add event listener
+      this.elements = { ...this.elements,
+        controlsSection: document.getElementById('controlsSection'),
+        startStopBtn: document.getElementById('startStopBtn'),
+        currentTabInfo: document.getElementById('currentTabInfo'),
+        currentTabFavicon: document.getElementById('currentTabFavicon'),
+        currentTabTitle: document.getElementById('currentTabTitle')
+      };
       this.elements.startStopBtn.addEventListener('click', this.handleStartStop);
     }
   }
   
   /**
-   * Test connection to background script
+   * Test background script connection
    */
   async testBackgroundConnection() {
     try {
       const response = await this.sendMessage({ type: 'GET_STATUS' });
-      
       if (response.success) {
         this.elements.extensionStatus.textContent = 'Connected';
         this.elements.extensionStatus.className = 'info-value connected';
-        console.log('Background script connection: OK');
       } else {
         throw new Error('Background script returned error');
       }
     } catch (error) {
-      console.error('Background script connection failed:', error);
       this.elements.extensionStatus.textContent = 'Error';
       this.elements.extensionStatus.className = 'info-value error';
     }
   }
   
   /**
-   * Test connection to backend API
+   * Test backend API connection
    */
   async testBackendConnection() {
     try {
-      // Use the CONFIG URL instead of hardcoded localhost
       const healthUrl = CONFIG.API_BASE_URL.replace('/api', '') + '/health';
       const response = await fetch(healthUrl);
-      
       if (response.ok) {
-        const data = await response.json();
         this.elements.backendStatus.textContent = 'Connected';
         this.elements.backendStatus.className = 'info-value connected';
-        console.log('Backend API connection: OK', data);
       } else {
         throw new Error(`HTTP ${response.status}`);
       }
     } catch (error) {
-      console.error('Backend API connection failed:', error);
       this.elements.backendStatus.textContent = 'Not available';
       this.elements.backendStatus.className = 'info-value error';
     }
@@ -168,7 +400,6 @@ class PopupController {
   async updateStatus() {
     try {
       const response = await this.sendMessage({ type: 'GET_STATUS' });
-      
       if (response.success) {
         this.currentStatus = response.data;
         this.updateUI();
@@ -183,75 +414,72 @@ class PopupController {
    */
   updateUI() {
     if (!this.currentStatus) return;
-    
-    const { isMonitoring, currentTabId, screenshotCount, lastClassification, audioState } = this.currentStatus;
+    const { 
+      isMonitoring, 
+      currentTabId, 
+      currentTabUrl, 
+      currentSiteCategory, 
+      screenshotCount, 
+      lastClassification, 
+      audioState, 
+      logsCount
+    } = this.currentStatus;
     
     // Update status indicator
-    if (isMonitoring) {
-      this.elements.statusDot.className = 'status-dot monitoring';
-      this.elements.statusText.textContent = 'AutoMuting';
-      
-      if (this.elements.startStopBtn) {
-        this.elements.startStopBtn.textContent = 'Stop AutoMuting';
-        this.elements.startStopBtn.style.background = '#ea4335';
-        this.elements.startStopBtn.style.borderColor = '#ea4335';
-      }
-      
-      // Show current tab info
-      if (currentTabId && this.elements.currentTabInfo) {
-        this.elements.currentTabInfo.style.display = 'block';
-        this.updateCurrentTabDisplay(currentTabId);
-      }
-    } else {
-      this.elements.statusDot.className = 'status-dot idle';
-      this.elements.statusText.textContent = 'Idle';
-      
-      if (this.elements.startStopBtn) {
-        this.elements.startStopBtn.textContent = 'Start AutoMuting';
-        this.elements.startStopBtn.style.background = '#1a73e8';
-        this.elements.startStopBtn.style.borderColor = '#1a73e8';
-      }
-      
-      if (this.elements.currentTabInfo) {
-        this.elements.currentTabInfo.style.display = 'none';
-      }
-    }
+    this.elements.statusDot.className = isMonitoring ? 'status-dot monitoring' : 'status-dot idle';
+    this.elements.statusText.textContent = isMonitoring ? 'AutoMuting' : 'Idle';
     
-    // Update audio status indicator
-    this.updateAudioStatusIndicator(audioState, isMonitoring);
-    
-    // Update button state
+    // Update button
     if (this.elements.startStopBtn) {
-      this.elements.startStopBtn.disabled = false;
+      this.elements.startStopBtn.textContent = isMonitoring ? 'Stop AutoMuting' : 'Start AutoMuting';
+      this.elements.startStopBtn.style.background = isMonitoring ? '#ea4335' : '#1a73e8';
+      this.elements.startStopBtn.style.borderColor = isMonitoring ? '#ea4335' : '#1a73e8';
     }
     
-    console.log('UI updated:', { isMonitoring, screenshotCount, lastClassification });
+    // Update current tab info
+    if (this.elements.currentTabInfo) {
+      this.elements.currentTabInfo.style.display = isMonitoring ? 'block' : 'none';
+      if(isMonitoring) this.updateCurrentTabDisplay(currentTabId);
+    }
+    
+    // Update audio indicator
+    this.updateAudioStatusIndicator(audioState, isMonitoring);
+
+    // Update classification display if monitoring
+    if (isMonitoring && lastClassification) {
+      this.updateClassificationDisplay(lastClassification);
+      this.elements.logsSection.style.display = 'block';
+    } else {
+      if (this.elements.classificationText) {
+        this.elements.classificationText.textContent = 'Waiting for classification...';
+        this.elements.classificationEmoji.textContent = '👁️';
+        this.elements.confidenceText.textContent = '---';
+      }
+      if (this.elements.logsSection) {
+        this.elements.logsSection.style.display = 'none';
+      }
+    }
+
+    // Update logs display if monitoring
+    if (isMonitoring) {
+      this.updateLogsDisplay();
+    }
   }
   
   /**
    * Update audio status indicator
    */
   updateAudioStatusIndicator(audioState, isMonitoring) {
-    const audioStatus = document.getElementById('audioStatus');
-    const audioStatusText = document.getElementById('audioStatusText');
-    
-    if (!audioStatus || !audioStatusText) return;
-    
+    if (!this.elements.audioStatus || !this.elements.audioStatusText) return;
     if (!isMonitoring || !audioState) {
-      audioStatus.className = 'audio-status unknown';
-      audioStatusText.textContent = 'Unknown';
+      this.elements.audioStatus.className = 'audio-status unknown';
+      this.elements.audioStatusText.textContent = 'Unknown';
       return;
     }
-    
-    if (audioState.muted) {
-      audioStatus.className = 'audio-status muted';
-      audioStatusText.textContent = 'Muted';
-    } else {
-      audioStatus.className = 'audio-status unmuted';  
-      audioStatusText.textContent = 'Unmuted';
-    }
+    this.elements.audioStatus.className = audioState.muted ? 'audio-status muted' : 'audio-status unmuted';
+    this.elements.audioStatusText.textContent = audioState.muted ? 'Muted' : 'Unmuted';
   }
-  
+
   /**
    * Update current tab display
    */
@@ -271,62 +499,29 @@ class PopupController {
   }
   
   /**
-   * Load and display available tabs
+   * Load list of monitorable tabs
    */
   async loadTabs() {
     try {
-      console.log('Loading tabs from all windows...');
-      
-      // Show loading state
       this.elements.tabLoading.style.display = 'block';
-      
-      // Get tabs from background script
       const response = await this.sendMessage({ type: 'GET_TABS' });
-      
-      if (!response.success) {
-        throw new Error(response.error);
-      }
-      
+      if (!response.success) throw new Error(response.error);
       const tabs = response.data;
-      console.log(`Loaded ${tabs.length} tabs from all windows`);
-      
-      // Hide loading
       this.elements.tabLoading.style.display = 'none';
+      this.elements.tabList.innerHTML = '';
       
-      // Clear existing tabs
-      const existingTabs = this.elements.tabList.querySelectorAll('.tab-item, .window-separator');
-      existingTabs.forEach(tab => tab.remove());
-      
-      // Add tabs to list
       if (tabs.length === 0) {
-        const noTabsDiv = document.createElement('div');
-        noTabsDiv.className = 'no-tabs';
-        noTabsDiv.style.cssText = 'text-align: center; color: #5f6368; font-style: italic; padding: 20px; font-size: 12px;';
-        noTabsDiv.textContent = 'No monitorable tabs found';
-        this.elements.tabList.appendChild(noTabsDiv);
+        this.elements.tabList.innerHTML = '<div class="no-tabs">No monitorable tabs found</div>';
         return;
       }
       
-      // Group tabs by window and display
       let currentWindowId = null;
-      const maxTabs = Math.min(tabs.length, 15); // Show max 15 tabs
-      
-      for (let i = 0; i < maxTabs; i++) {
-        const tab = tabs[i];
+      tabs.slice(0, 15).forEach(tab => {
         const isFirstInWindow = tab.windowId !== currentWindowId;
-        
         const tabElement = this.createTabElement(tab, isFirstInWindow);
         this.elements.tabList.appendChild(tabElement);
-        
         currentWindowId = tab.windowId;
-      }
-      
-      if (tabs.length > maxTabs) {
-        const moreDiv = document.createElement('div');
-        moreDiv.style.cssText = 'text-align: center; color: #5f6368; font-size: 11px; padding: 8px;';
-        moreDiv.textContent = `... and ${tabs.length - maxTabs} more tabs`;
-        this.elements.tabList.appendChild(moreDiv);
-      }
+      });
       
     } catch (error) {
       console.error('Failed to load tabs:', error);
@@ -335,108 +530,35 @@ class PopupController {
   }
 
   /**
-   * Create tab element for the list
+   * Create tab element for display
    */
   createTabElement(tab, isFirstInWindow = false) {
     const container = document.createElement('div');
-    
-    // Add window separator if this is the first tab in a new window
     if (isFirstInWindow && tab.windowId) {
-      const windowSeparator = document.createElement('div');
-      windowSeparator.style.cssText = `
-        font-size: 11px;
-        color: #5f6368;
-        padding: 4px 8px;
-        background: #f8f9fa;
-        border-bottom: 1px solid #e8eaed;
-        font-weight: 500;
-      `;
-      windowSeparator.textContent = `Window ${tab.windowId}${tab.active ? ' (Current)' : ''}`;
-      container.appendChild(windowSeparator);
+        const windowSeparator = document.createElement('div');
+        windowSeparator.className = 'window-separator';
+        windowSeparator.textContent = `Window ${tab.windowId}`;
+        container.appendChild(windowSeparator);
     }
     
     const tabDiv = document.createElement('div');
     tabDiv.className = 'tab-item';
     tabDiv.dataset.tabId = tab.id;
-    tabDiv.style.cssText = `
-      display: flex;
-      align-items: center;
-      padding: 8px 12px;
-      margin-bottom: 4px;
-      border: 1px solid #dadce0;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      background: #ffffff;
-    `;
     
-    // Highlight active tab
-    if (tab.active) {
-      tabDiv.style.background = '#e8f0fe';
-      tabDiv.style.borderColor = '#1a73e8';
-    }
-    
-    // Add selected state if this is current monitoring tab
-    if (this.currentStatus && tab.id === this.currentStatus.currentTabId) {
-      tabDiv.style.background = '#fce8e6';
-      tabDiv.style.borderColor = '#ea4335';
-      this.selectedTabId = tab.id;
-    }
-    
-    // Favicon
     const favicon = document.createElement('img');
-    favicon.style.cssText = 'width: 16px; height: 16px; margin-right: 8px; flex-shrink: 0;';
     favicon.src = tab.favIconUrl || '../icons/icon16.png';
-    favicon.alt = '';
-    favicon.onerror = () => {
-      favicon.src = '../icons/icon16.png';
-    };
-    
-    // Title with better truncation
-    const title = document.createElement('span');
-    title.style.cssText = 'flex: 1; font-size: 13px; color: #202124; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
-    
-    // Better title handling
-    let displayTitle = tab.title || 'Loading...';
-    if (displayTitle === 'Loading...' && tab.url) {
-      try {
-        const url = new URL(tab.url);
-        displayTitle = url.hostname;
-      } catch (e) {
-        displayTitle = 'Loading...';
-      }
-    }
-    
-    title.textContent = displayTitle;
-    title.title = `${displayTitle}\n${tab.url}`; // Full info in tooltip
-    
-    // Status indicators
-    const indicators = document.createElement('div');
-    indicators.style.cssText = 'display: flex; align-items: center; gap: 4px; margin-left: 8px;';
-    
-    // Audio indicator
-    if (tab.audible) {
-      const audioIcon = document.createElement('span');
-      audioIcon.style.cssText = 'font-size: 12px;';
-      audioIcon.textContent = '🔊';
-      audioIcon.title = 'Tab has audio';
-      indicators.appendChild(audioIcon);
-    }
-    
-    // Active tab indicator
-    if (tab.active) {
-      const activeIcon = document.createElement('span');
-      activeIcon.style.cssText = 'font-size: 10px; color: #1a73e8;';
-      activeIcon.textContent = '●';
-      activeIcon.title = 'Active tab';
-      indicators.appendChild(activeIcon);
-    }
+    favicon.style.width = '16px';
+    favicon.style.height = '16px';
+    favicon.style.marginRight = '8px';
+
+    const title = document.createElement('div');
+    title.textContent = tab.title || 'Loading...';
+    title.style.whiteSpace = 'nowrap';
+    title.style.overflow = 'hidden';
+    title.style.textOverflow = 'ellipsis';
     
     tabDiv.appendChild(favicon);
     tabDiv.appendChild(title);
-    tabDiv.appendChild(indicators);
-    
-    // Click handler - attach to the tabDiv, not container
     tabDiv.addEventListener('click', () => this.handleTabSelection(tab));
     
     container.appendChild(tabDiv);
@@ -447,99 +569,68 @@ class PopupController {
    * Handle tab selection
    */
   async handleTabSelection(tab) {
-    try {
-      console.log('Tab selected:', tab.id, tab.title);
-      
-      // Update selected tab
-      this.selectedTabId = tab.id;
-      
-      // Update visual selection
-      const tabItems = this.elements.tabList.querySelectorAll('.tab-item');
-      tabItems.forEach(item => {
-        const tabElement = item.querySelector ? item : item.querySelector('.tab-item') || item;
-        const itemTabId = parseInt(tabElement.dataset?.tabId);
-        
-        if (itemTabId === tab.id) {
-          tabElement.style.background = '#e8f0fe';
-          tabElement.style.borderColor = '#1a73e8';
-        } else {
-          tabElement.style.background = '#ffffff';
-          tabElement.style.borderColor = '#dadce0';
-        }
-      });
-      
-      // Create controls section if it doesn't exist
-      if (!this.elements.controlsSection) {
-        this.createStartStopButton();
-      }
-      
-      // Show controls
-      if (this.elements.controlsSection) {
-        this.elements.controlsSection.style.display = 'block';
-      }
-      
-      // Update current tab info
-      if (this.elements.currentTabFavicon && this.elements.currentTabTitle) {
-        this.elements.currentTabFavicon.src = tab.favIconUrl || '../icons/icon16.png';
-        this.elements.currentTabTitle.textContent = tab.title || 'Untitled';
-      }
-      
-      console.log('Tab selection updated, controls should now be visible');
-      
-    } catch (error) {
-      console.error('Error selecting tab:', error);
-    }
+    this.selectedTabId = tab.id;
+    document.querySelectorAll('.tab-item').forEach(item => {
+      item.style.background = parseInt(item.dataset.tabId) === tab.id ? '#e8f0fe' : '#ffffff';
+    });
+    if (this.elements.controlsSection) this.elements.controlsSection.style.display = 'block';
+    if (this.elements.currentTabTitle) this.elements.currentTabTitle.textContent = tab.title || 'Untitled';
+    if (this.elements.currentTabFavicon) this.elements.currentTabFavicon.src = tab.favIconUrl || '../icons/icon16.png';
   }
   
   /**
    * Handle start/stop monitoring button
+   * ✅ FIXED: Proper user gesture handling for activeTab permission
    */
   async handleStartStop() {
     try {
-      this.elements.startStopBtn.disabled = true;
-      this.elements.startStopBtn.textContent = 'Processing...';
+      console.log('✅ handleStartStop called - user clicked button (user gesture context)');
       
       if (this.currentStatus && this.currentStatus.isMonitoring) {
-        // Stop monitoring
-        console.log('Stopping AutoMuting...');
-        const response = await this.sendMessage({ type: 'STOP_MONITORING' });
-        
-        if (response.success) {
-          console.log('AutoMuting stopped:', response.data);
-        } else {
-          throw new Error(response.error);
-        }
+        console.log('Stopping monitoring...');
+        await this.sendMessage({ type: 'STOP_MONITORING' });
       } else {
-        // Start monitoring
         if (!this.selectedTabId) {
-          alert('Please select a tab to AutoMute first');
+          alert('Please select a tab to monitor.');
           return;
         }
         
-        console.log('Starting AutoMuting for tab:', this.selectedTabId);
-        const response = await this.sendMessage({ 
-          type: 'START_MONITORING', 
-          tabId: this.selectedTabId 
-        });
+        console.log(`✅ Starting monitoring for tab ${this.selectedTabId} (within user gesture)`);
         
-        if (response.success) {
-          console.log('AutoMuting started:', response.data);
-        } else {
-          throw new Error(response.error);
-        }
+        // ✅ IMPORTANT: This is called directly from user click (user gesture context)
+        // The message will be delivered to background script with active gesture
+        // This allows background.js to capture screenshots with activeTab permission
+        await this.sendMessage({ type: 'START_MONITORING', tabId: this.selectedTabId });
       }
       
-      // Update status
+      // Update UI immediately
       await this.updateStatus();
-      
     } catch (error) {
-      console.error('Failed to toggle AutoMuting:', error);
+      console.error('Failed to toggle monitoring:', error);
       alert(`Error: ${error.message}`);
-    } finally {
-      this.elements.startStopBtn.disabled = false;
     }
   }
-  
+
+  /**
+   * Start debug refresh interval
+   */
+  startDebugRefresh() {
+    setInterval(() => {
+      if (this.currentStatus && this.currentStatus.isMonitoring) {
+        this.updateStatus();
+      }
+    }, 2000);
+  }
+
+  /**
+   * Start periodic status updates
+   */
+  startPeriodicUpdates() {
+    setInterval(() => {
+      this.updateStatus();
+    }, 3000);
+  }
+
   /**
    * Send message to background script
    */
@@ -550,14 +641,14 @@ class PopupController {
       });
     });
   }
-  
+
   /**
    * Show error message
    */
   showError(message) {
     console.error('Popup error:', message);
+    alert(`Error: ${message}`);
   }
 }
 
-// Initialize popup controller
 const popupController = new PopupController();
