@@ -371,6 +371,107 @@ class OpenAIService {
       }
     };
   }
+
+  /**
+   * Dual-model classification: fast with gpt-4o-mini, accurate fallback to gpt-4o
+   */
+  async classifyImageDual(base64Image, confidenceThreshold = 75) {
+    const OpenAI = require('openai');
+    const config = require('../config/config');
+
+    // Step 1: try gpt-4o-mini (fast)
+    let miniResult;
+    try {
+      const startTime = Date.now();
+      const response = await new OpenAI({ apiKey: config.openaiApiKey })
+        .chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: this.getPrompt() },
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}`, detail: 'low' } }
+            ]
+          }],
+          max_tokens: 250,
+          temperature: 0.2
+        });
+
+      miniResult = this._parseResponse(response.choices[0].message.content);
+      miniResult.processing_time = (Date.now() - startTime) / 1000;
+      miniResult.model_used = 'mini';
+    } catch (error) {
+      console.error('gpt-4o-mini call failed:', error.message);
+      // Fall through to gpt-4o
+    }
+
+    // Step 2: if mini succeeded and confidence is high enough, return it
+    if (miniResult && miniResult.confidence >= confidenceThreshold) {
+      return miniResult;
+    }
+
+    // Step 3: fallback to gpt-4o
+    try {
+      const startTime = Date.now();
+      const response = await new OpenAI({ apiKey: config.openaiApiKey })
+        .chat.completions.create({
+          model: 'gpt-4o',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: this.getPrompt() },
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}`, detail: 'low' } }
+            ]
+          }],
+          max_tokens: 250,
+          temperature: 0.2
+        });
+
+      const fullResult = this._parseResponse(response.choices[0].message.content);
+      fullResult.processing_time = (Date.now() - startTime) / 1000;
+      fullResult.model_used = 'gpt4o';
+      if (miniResult) fullResult.mini_result = miniResult;
+      return fullResult;
+    } catch (error) {
+      console.error('gpt-4o fallback failed:', error.message);
+      // If gpt-4o also fails, return mini result if we have it
+      if (miniResult) return miniResult;
+      throw error;
+    }
+  }
+
+  /**
+   * Parse OpenAI response content into a classification result object.
+   */
+  _parseResponse(content) {
+    let cleanContent = content.trim();
+    if (cleanContent.startsWith('```json')) {
+      cleanContent = cleanContent.replace(/```json\s*/, '').replace(/\s*```$/, '');
+    } else if (cleanContent.startsWith('```')) {
+      cleanContent = cleanContent.replace(/```\s*/, '').replace(/\s*```$/, '');
+    }
+    cleanContent = cleanContent.replace(/,\s*}/, '}').replace(/,\s*]/, ']');
+
+    let result;
+    try {
+      result = JSON.parse(cleanContent);
+    } catch {
+      const lower = content.toLowerCase();
+      if (lower.includes('ad') || lower.includes('skip')) {
+        result = { classification: 'ad', confidence: 65, reasoning: 'Fallback: ad keywords' };
+      } else if (lower.includes('game') || lower.includes('sport')) {
+        result = { classification: 'game', confidence: 65, reasoning: 'Fallback: game keywords' };
+      } else {
+        result = { classification: 'other', confidence: 50, reasoning: 'Fallback: parse failed' };
+      }
+    }
+
+    if (!['ad', 'game', 'other'].includes(result.classification)) result.classification = 'other';
+    if (typeof result.confidence !== 'number') result.confidence = 50;
+    if (!result.reasoning) result.reasoning = 'Classification completed';
+
+    return result;
+  }
 }
 
 // ✅ IMPROVED: Export with default V1, allow switching
