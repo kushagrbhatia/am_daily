@@ -259,6 +259,26 @@ class AutoMuteDetector {
           sendResponse({ success: true, data: allLogsExport.logs });
           break;
 
+        case 'YOUTUBE_AD_START':
+          this.log('info', 'YouTube ad detected via DOM — muting');
+          if (this.currentTabId) {
+            await audioController.muteTab(this.currentTabId, { smooth: false });
+          } else if (sender?.tab?.id) {
+            await audioController.muteTab(sender.tab.id, { smooth: false });
+          }
+          sendResponse({ success: true });
+          break;
+
+        case 'YOUTUBE_AD_END': {
+          this.log('info', 'YouTube ad ended via DOM — unmuting');
+          const tabIdToUnmute = this.currentTabId || sender?.tab?.id;
+          if (tabIdToUnmute) {
+            await audioController.unmuteTab(tabIdToUnmute, { smooth: false });
+          }
+          sendResponse({ success: true });
+          break;
+        }
+
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
       }
@@ -300,6 +320,19 @@ class AutoMuteDetector {
       this.rateLimitState.backoffMultiplier = 1;
       this.rateLimitState.currentInterval = CONFIG.SCREENSHOT_INTERVAL;
       
+      // Skip screenshot loop for YouTube — DOM detection handles it
+      const hostname = this.extractHostname(tab.url);
+      if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
+        this.log('info', 'YouTube tab detected — using DOM detection, skipping screenshot loop');
+        return {
+          success: true,
+          tabId: this.currentTabId,
+          tabTitle: tab.title,
+          tabUrl: tab.url,
+          mode: 'youtube_dom'
+        };
+      }
+
       // ✅ FIXED: Capture immediately within user gesture
       console.log('✅ IMMEDIATE CAPTURE: User gesture active, capturing first screenshot NOW');
       this.screenshotInterval = setTimeout(() => {
