@@ -36,6 +36,7 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api', require('./routes/classify'));
+app.use('/api/report', require('./routes/report'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
