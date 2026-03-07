@@ -6,7 +6,7 @@ const { sendWeeklyReport } = require('../services/email');
 // Called by Cloud Scheduler weekly. Secured by a simple shared secret.
 router.post('/weekly', async (req, res) => {
   const secret = req.headers['x-report-secret'];
-  if (secret !== process.env.REPORT_SECRET) {
+  if (!process.env.REPORT_SECRET || secret !== process.env.REPORT_SECRET) {
     return res.status(401).json({ error: 'unauthorized' });
   }
 

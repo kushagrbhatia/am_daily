@@ -11,7 +11,7 @@ async function sendWeeklyReport(stats) {
 
   const subject = `AutoMute Weekly Report — ${stats.total} classifications`;
 
-  const topHostsHtml = stats.topHostnames
+  const topHostsHtml = (stats.topHostnames || [])
     .map(({ host, count }) => `<li>${host}: ${count}</li>`)
     .join('');
 
