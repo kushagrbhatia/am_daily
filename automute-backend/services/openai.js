@@ -376,9 +376,6 @@ class OpenAIService {
    * Dual-model classification: fast with gpt-4o-mini, accurate fallback to gpt-4o
    */
   async classifyImageDual(base64Image, confidenceThreshold = 75) {
-    const OpenAI = require('openai');
-    const config = require('../config/config');
-
     // Step 1: try gpt-4o-mini (fast)
     let miniResult;
     try {
@@ -468,6 +465,7 @@ class OpenAIService {
 
     if (!['ad', 'game', 'other'].includes(result.classification)) result.classification = 'other';
     if (typeof result.confidence !== 'number') result.confidence = 50;
+    if (result.confidence < 0 || result.confidence > 100) result.confidence = 50;
     if (!result.reasoning) result.reasoning = 'Classification completed';
 
     return result;
