@@ -43,10 +43,7 @@ class PopupController {
       
       // Create classification display area (the green box!)
       this.createClassificationDisplay();
-      
-      // Create start/stop button
-      this.createStartStopButton();
-      
+
       // Create logs viewer
       this.createLogsViewer();
       
@@ -183,13 +180,14 @@ class PopupController {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h2 style="font-size: 14px; font-weight: 500; color: #202124; margin: 0;">📋 Logs</h2>
           <div style="display: flex; gap: 6px;">
-            <button id="toggleLogs" style="background: none; border: 1px solid #dadce0; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer;">Hide</button>
+            <button id="toggleLogs" style="background:none;border:none;color:#1967d2;font-size:11px;cursor:pointer;text-decoration:underline;padding:0;">Show logs</button>
             <button id="clearLogsBtn" style="background: none; border: 1px solid #dadce0; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer;">Clear</button>
             <button id="exportLogsBtn" style="background: #1967d2; color: white; border: 1px solid #1967d2; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer;">Export</button>
           </div>
         </div>
         
         <div id="logsContainer" style="
+          display: none;
           max-height: 300px;
           overflow-y: auto;
           background: #f8f9fa;
@@ -229,9 +227,10 @@ class PopupController {
       };
       
       this.elements.toggleLogs.addEventListener('click', () => {
-        const isVisible = this.elements.logsSection.style.display !== 'none';
-        this.elements.logsSection.style.display = isVisible ? 'none' : 'block';
-        this.elements.toggleLogs.textContent = isVisible ? 'Show' : 'Hide';
+        const container = this.elements.logsContainer;
+        const isHidden = container.style.display === 'none' || !container.style.display;
+        container.style.display = isHidden ? 'block' : 'none';
+        this.elements.toggleLogs.textContent = isHidden ? 'Hide logs' : 'Show logs';
       });
       
       this.elements.clearLogsBtn.addEventListener('click', () => this.clearLogs());
@@ -428,14 +427,26 @@ class PopupController {
     // Update status indicator
     this.elements.statusDot.className = isMonitoring ? 'status-dot monitoring' : 'status-dot idle';
     this.elements.statusText.textContent = isMonitoring ? 'AutoMuting' : 'Idle';
-    
-    // Update button
-    if (this.elements.startStopBtn) {
-      this.elements.startStopBtn.textContent = isMonitoring ? 'Stop AutoMuting' : 'Start AutoMuting';
-      this.elements.startStopBtn.style.background = isMonitoring ? '#ea4335' : '#1a73e8';
-      this.elements.startStopBtn.style.borderColor = isMonitoring ? '#ea4335' : '#1a73e8';
+
+    // Show/hide stop button
+    let stopBtn = document.getElementById('globalStopBtn');
+    if (isMonitoring) {
+      if (!stopBtn) {
+        stopBtn = document.createElement('button');
+        stopBtn.id = 'globalStopBtn';
+        stopBtn.textContent = '⏹ Stop AutoMuting';
+        stopBtn.style.cssText = `
+          display:block;width:calc(100% - 32px);margin:0 16px 12px;
+          padding:8px;background:#ea4335;color:white;border:none;
+          border-radius:4px;font-size:13px;font-weight:500;cursor:pointer;
+        `;
+        stopBtn.addEventListener('click', () => this.sendMessage({ type: 'STOP_MONITORING' }).then(() => this.updateStatus()));
+        document.body.insertBefore(stopBtn, document.body.firstChild);
+      }
+    } else if (stopBtn) {
+      stopBtn.remove();
     }
-    
+
     // Update current tab info
     if (this.elements.currentTabInfo) {
       this.elements.currentTabInfo.style.display = isMonitoring ? 'block' : 'none';
@@ -445,18 +456,19 @@ class PopupController {
     // Update audio indicator
     this.updateAudioStatusIndicator(audioState, isMonitoring);
 
+    // Always show the logs section (it contains the Show/Hide logs toggle)
+    if (this.elements.logsSection) {
+      this.elements.logsSection.style.display = 'block';
+    }
+
     // Update classification display if monitoring
     if (isMonitoring && lastClassification) {
       this.updateClassificationDisplay(lastClassification);
-      this.elements.logsSection.style.display = 'block';
     } else {
       if (this.elements.classificationText) {
         this.elements.classificationText.textContent = 'Waiting for classification...';
         this.elements.classificationEmoji.textContent = '👁️';
         this.elements.confidenceText.textContent = '---';
-      }
-      if (this.elements.logsSection) {
-        this.elements.logsSection.style.display = 'none';
       }
     }
 
@@ -534,33 +546,43 @@ class PopupController {
    */
   createTabElement(tab, isFirstInWindow = false) {
     const container = document.createElement('div');
+
     if (isFirstInWindow && tab.windowId) {
-        const windowSeparator = document.createElement('div');
-        windowSeparator.className = 'window-separator';
-        windowSeparator.textContent = `Window ${tab.windowId}`;
-        container.appendChild(windowSeparator);
+      const sep = document.createElement('div');
+      sep.className = 'window-separator';
+      sep.textContent = `Window ${tab.windowId}`;
+      container.appendChild(sep);
     }
-    
+
     const tabDiv = document.createElement('div');
     tabDiv.className = 'tab-item';
     tabDiv.dataset.tabId = tab.id;
-    
+
     const favicon = document.createElement('img');
     favicon.src = tab.favIconUrl || '../icons/icon16.png';
-    favicon.style.width = '16px';
-    favicon.style.height = '16px';
-    favicon.style.marginRight = '8px';
+    favicon.style.cssText = 'width:16px;height:16px;margin-right:8px;flex-shrink:0;';
 
     const title = document.createElement('div');
     title.textContent = tab.title || 'Loading...';
-    title.style.whiteSpace = 'nowrap';
-    title.style.overflow = 'hidden';
-    title.style.textOverflow = 'ellipsis';
-    
+    title.style.cssText = 'flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;';
+
+    const monitorBtn = document.createElement('button');
+    monitorBtn.textContent = '▶ Monitor';
+    monitorBtn.className = 'monitor-btn';
+    monitorBtn.style.cssText = `
+      margin-left:8px;padding:4px 10px;border:1px solid #1a73e8;
+      border-radius:4px;background:#1a73e8;color:white;
+      font-size:11px;font-weight:500;cursor:pointer;flex-shrink:0;
+    `;
+    monitorBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.startMonitoringTab(tab);
+    });
+
+    tabDiv.style.cssText = 'display:flex;align-items:center;padding:8px 12px;';
     tabDiv.appendChild(favicon);
     tabDiv.appendChild(title);
-    tabDiv.addEventListener('click', () => this.handleTabSelection(tab));
-    
+    tabDiv.appendChild(monitorBtn);
     container.appendChild(tabDiv);
     return container;
   }
@@ -578,6 +600,22 @@ class PopupController {
     if (this.elements.currentTabFavicon) this.elements.currentTabFavicon.src = tab.favIconUrl || '../icons/icon16.png';
   }
   
+  /**
+   * Start monitoring a specific tab (called from inline Monitor button)
+   */
+  async startMonitoringTab(tab) {
+    try {
+      if (this.currentStatus?.isMonitoring) {
+        await this.sendMessage({ type: 'STOP_MONITORING' });
+      }
+      await this.sendMessage({ type: 'START_MONITORING', tabId: tab.id });
+      await this.updateStatus();
+    } catch (error) {
+      console.error('Failed to start monitoring:', error);
+      alert(`Error: ${error.message}`);
+    }
+  }
+
   /**
    * Handle start/stop monitoring button
    * ✅ FIXED: Proper user gesture handling for activeTab permission
