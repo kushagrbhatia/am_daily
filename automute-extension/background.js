@@ -262,7 +262,7 @@ class AutoMuteDetector {
           sendResponse({ success: true, data: allLogsExport.logs });
           break;
 
-        case 'YOUTUBE_AD_START':
+        case 'YOUTUBE_AD_START': {
           this.log('info', 'YouTube ad detected via DOM — muting');
           if (this.currentTabId) {
             await audioController.muteTab(this.currentTabId, { smooth: false });
@@ -275,11 +275,12 @@ class AutoMuteDetector {
             shouldMute: true,
             source: 'youtube_dom',
             timestamp: new Date().toISOString(),
-            hostname: this.extractHostname(this.currentTabUrl),
+            hostname: this.extractHostname(this.currentTabUrl || sender?.tab?.url || null),
             siteCategory: 'youtube'
           };
           sendResponse({ success: true });
           break;
+        }
 
         case 'YOUTUBE_AD_END': {
           this.log('info', 'YouTube ad ended via DOM — unmuting');
@@ -293,7 +294,7 @@ class AutoMuteDetector {
             shouldMute: false,
             source: 'youtube_dom',
             timestamp: new Date().toISOString(),
-            hostname: this.extractHostname(this.currentTabUrl),
+            hostname: this.extractHostname(this.currentTabUrl || sender?.tab?.url || null),
             siteCategory: 'youtube'
           };
           sendResponse({ success: true });
@@ -865,6 +866,7 @@ class AutoMuteDetector {
     if (tabId === this.currentTabId && changeInfo.url) {
       this.log('info', `Monitored tab navigated to: ${changeInfo.url}`);
       this.currentTabUrl = changeInfo.url;
+      this.lastClassification = null;
 
       if (this.isTabMonitorable(tab)) {
         this.log('debug', 'New URL is monitorable, continuing monitoring');
