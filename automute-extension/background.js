@@ -407,6 +407,9 @@ class AutoMuteDetector {
       
       const stoppedTabId = this.currentTabId;
       this.isMonitoring = false;
+      if (this.currentTabId) {
+        this.videoBoundsMap.delete(this.currentTabId);
+      }
       this.currentTabId = null;
       this.currentTabUrl = null;
       this.lastClassification = null;
@@ -836,11 +839,14 @@ class AutoMuteDetector {
    * Handle tab updated event
    */
   async handleTabUpdated(tabId, changeInfo, tab) {
+    // Clear cached video bounds for any tab that navigates — new page may have different layout
+    if (changeInfo.url) {
+      this.videoBoundsMap.delete(tabId);
+    }
+
     if (tabId === this.currentTabId && changeInfo.url) {
       this.log('info', `Monitored tab navigated to: ${changeInfo.url}`);
       this.currentTabUrl = changeInfo.url;
-      // Clear cached video bounds — new page may have different layout
-      this.videoBoundsMap.delete(tabId);
 
       if (this.isTabMonitorable(tab)) {
         this.log('debug', 'New URL is monitorable, continuing monitoring');
