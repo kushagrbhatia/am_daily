@@ -36,11 +36,12 @@ class ScreenshotManager {
       // Validate tab exists and is accessible
       await this.validateTab(tabId);
       
-      // Set capture options
+      // Set capture options (cropBounds is not a Chrome ImageDetails key, so exclude it)
+      const { cropBounds, ...captureApiOptions } = options;
       const captureOptions = {
         format: 'jpeg',
         quality: Math.floor(CONFIG.SCREENSHOT_QUALITY * 100),
-        ...options
+        ...captureApiOptions
       };
       
       // Capture the visible tab
@@ -66,11 +67,11 @@ class ScreenshotManager {
       
       // Crop to video region if bounds were provided
       let imageToProcess = base64Data;
-      if (options.cropBounds) {
-        const cropped = await this.cropImage(base64Data, options.cropBounds);
+      if (cropBounds) {
+        const cropped = await this.cropImage(base64Data, cropBounds);
         if (cropped) {
           imageToProcess = cropped;
-          console.log(`Screenshot cropped to video region: ${options.cropBounds.width}x${options.cropBounds.height}px`);
+          console.log(`Screenshot cropped to video region: ${cropBounds.width}x${cropBounds.height}px`);
         } else {
           console.warn('Crop failed, using full screenshot');
         }
@@ -275,6 +276,7 @@ async optimizeImage(base64Data, resourceId) {
    * @returns {Promise<string|null>} Cropped base64, or null on failure
    */
   async cropImage(base64, bounds) {
+    let bitmap;
     try {
       // Decode base64 → Blob
       const byteChars = atob(base64);
@@ -285,7 +287,7 @@ async optimizeImage(base64Data, resourceId) {
       const blob = new Blob([byteNums], { type: 'image/jpeg' });
 
       // createImageBitmap is available in service workers
-      const bitmap = await createImageBitmap(blob);
+      bitmap = await createImageBitmap(blob);
 
       // Clamp bounds to actual image dimensions
       const x = Math.max(0, Math.round(bounds.x));
@@ -302,21 +304,23 @@ async optimizeImage(base64Data, resourceId) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(bitmap, x, y, width, height, 0, 0, width, height);
 
-      // Export to blob → base64
+      // Export to blob → base64 (chunked apply avoids O(n²) string concat)
       const croppedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
       const arrayBuffer = await croppedBlob.arrayBuffer();
       const croppedBytes = new Uint8Array(arrayBuffer);
+      const CHUNK_SIZE = 8192;
       let binary = '';
-      for (let i = 0; i < croppedBytes.length; i++) {
-        binary += String.fromCharCode(croppedBytes[i]);
+      for (let i = 0; i < croppedBytes.length; i += CHUNK_SIZE) {
+        binary += String.fromCharCode.apply(null, croppedBytes.subarray(i, i + CHUNK_SIZE));
       }
 
-      bitmap.close(); // Free memory
       return btoa(binary);
 
     } catch (error) {
       console.warn('cropImage failed, will use full screenshot:', error.message);
       return null;
+    } finally {
+      if (bitmap) bitmap.close(); // Free GPU memory in all paths
     }
   }
 
