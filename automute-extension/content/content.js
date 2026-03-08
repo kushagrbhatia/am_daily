@@ -40,11 +40,12 @@
     });
 
     const rect = largest.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
     const bounds = {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
+      x: Math.round(rect.left * dpr),
+      y: Math.round(rect.top * dpr),
+      width: Math.round(rect.width * dpr),
+      height: Math.round(rect.height * dpr)
     };
 
     // Only send if bounds changed meaningfully (>5px difference)
