@@ -64,8 +64,20 @@ class ScreenshotManager {
         throw new Error('Invalid data URL format');
       }
       
+      // Crop to video region if bounds were provided
+      let imageToProcess = base64Data;
+      if (options.cropBounds) {
+        const cropped = await this.cropImage(base64Data, options.cropBounds);
+        if (cropped) {
+          imageToProcess = cropped;
+          console.log(`Screenshot cropped to video region: ${options.cropBounds.width}x${options.cropBounds.height}px`);
+        } else {
+          console.warn('Crop failed, using full screenshot');
+        }
+      }
+
       // Optimize image
-      const optimizedBase64 = await this.optimizeImage(base64Data, captureId);
+      const optimizedBase64 = await this.optimizeImage(imageToProcess, captureId);
       
       // Track for memory management
       const estimatedSize = (optimizedBase64.length * 3) / 4; // Rough base64 to byte conversion
@@ -254,6 +266,60 @@ async optimizeImage(base64Data, resourceId) {
     };
   }
   
+  /**
+   * Crop base64 image to a specific region using OffscreenCanvas.
+   * Safe to call in service worker context (no document needed).
+   * Returns cropped base64, or null if crop fails (caller falls back to full image).
+   * @param {string} base64 - Original base64 JPEG
+   * @param {{ x: number, y: number, width: number, height: number }} bounds - Crop region
+   * @returns {Promise<string|null>} Cropped base64, or null on failure
+   */
+  async cropImage(base64, bounds) {
+    try {
+      // Decode base64 → Blob
+      const byteChars = atob(base64);
+      const byteNums = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNums[i] = byteChars.charCodeAt(i);
+      }
+      const blob = new Blob([byteNums], { type: 'image/jpeg' });
+
+      // createImageBitmap is available in service workers
+      const bitmap = await createImageBitmap(blob);
+
+      // Clamp bounds to actual image dimensions
+      const x = Math.max(0, Math.round(bounds.x));
+      const y = Math.max(0, Math.round(bounds.y));
+      const width = Math.min(Math.round(bounds.width), bitmap.width - x);
+      const height = Math.min(Math.round(bounds.height), bitmap.height - y);
+
+      if (width <= 0 || height <= 0) {
+        throw new Error(`Invalid crop dimensions: ${width}x${height}`);
+      }
+
+      // OffscreenCanvas is available in service workers
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, x, y, width, height, 0, 0, width, height);
+
+      // Export to blob → base64
+      const croppedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+      const arrayBuffer = await croppedBlob.arrayBuffer();
+      const croppedBytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < croppedBytes.length; i++) {
+        binary += String.fromCharCode(croppedBytes[i]);
+      }
+
+      bitmap.close(); // Free memory
+      return btoa(binary);
+
+    } catch (error) {
+      console.warn('cropImage failed, will use full screenshot:', error.message);
+      return null;
+    }
+  }
+
   /**
    * Process queued capture requests
    */
