@@ -14,7 +14,10 @@ class AutoMuteDetector {
     this.screenshotCount = 0;
     this.classificationHistory = [];
     this.maxHistorySize = 50;
-    
+
+    // Video bounds detected by content script, keyed by tabId
+    this.videoBoundsMap = new Map();
+
     // LOCAL LOGGING SYSTEM
     this.logs = [];
     this.maxLogs = 500;
@@ -279,6 +282,22 @@ class AutoMuteDetector {
           break;
         }
 
+        case 'VIDEO_BOUNDS_UPDATED':
+          if (sender?.tab?.id) {
+            this.videoBoundsMap.set(sender.tab.id, message.bounds);
+            this.log('debug', `Video bounds updated for tab ${sender.tab.id}`, message.bounds);
+          }
+          sendResponse({ success: true });
+          break;
+
+        case 'VIDEO_BOUNDS_CLEARED':
+          if (sender?.tab?.id) {
+            this.videoBoundsMap.delete(sender.tab.id);
+            this.log('debug', `Video bounds cleared for tab ${sender.tab.id}`);
+          }
+          sendResponse({ success: true });
+          break;
+
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
       }
@@ -450,14 +469,17 @@ class AutoMuteDetector {
       this.log('debug', `Tab info: ${tab.title}`, { audible: tab.audible, muted: tab.mutedInfo?.muted });
       
       const screenshotStart = Date.now();
-      const base64Image = await screenshotManager.captureTab(this.currentTabId);
+      const videoBounds = this.videoBoundsMap.get(this.currentTabId);
+      const captureOptions = videoBounds ? { cropBounds: videoBounds } : {};
+      const base64Image = await screenshotManager.captureTab(this.currentTabId, captureOptions);
       const screenshotTime = Date.now() - screenshotStart;
-      
+
       if (!base64Image) {
         throw new Error('Screenshot capture returned empty data');
       }
-      
-      this.log('debug', `Screenshot captured in ${screenshotTime}ms (${Math.round(base64Image.length / 1024)}KB)`);
+
+      const cropInfo = videoBounds ? ` [cropped to video ${videoBounds.width}x${videoBounds.height}]` : ' [full screenshot]';
+      this.log('debug', `Screenshot captured in ${screenshotTime}ms (${Math.round(base64Image.length / 1024)}KB)${cropInfo}`);
       
       const classificationStart = Date.now();
       const classification = await apiClient.classifyImage(base64Image, siteMetadata);
@@ -807,6 +829,7 @@ class AutoMuteDetector {
     }
     
     audioController.handleTabRemoved(tabId);
+    this.videoBoundsMap.delete(tabId);
   }
   
   /**
@@ -816,7 +839,9 @@ class AutoMuteDetector {
     if (tabId === this.currentTabId && changeInfo.url) {
       this.log('info', `Monitored tab navigated to: ${changeInfo.url}`);
       this.currentTabUrl = changeInfo.url;
-      
+      // Clear cached video bounds — new page may have different layout
+      this.videoBoundsMap.delete(tabId);
+
       if (this.isTabMonitorable(tab)) {
         this.log('debug', 'New URL is monitorable, continuing monitoring');
       } else {
