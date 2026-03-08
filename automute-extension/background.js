@@ -269,6 +269,15 @@ class AutoMuteDetector {
           } else if (sender?.tab?.id) {
             await audioController.muteTab(sender.tab.id, { smooth: false });
           }
+          this.lastClassification = {
+            classification: 'ad',
+            confidence: 100,
+            shouldMute: true,
+            source: 'youtube_dom',
+            timestamp: new Date().toISOString(),
+            hostname: this.extractHostname(this.currentTabUrl),
+            siteCategory: 'youtube'
+          };
           sendResponse({ success: true });
           break;
 
@@ -278,6 +287,15 @@ class AutoMuteDetector {
           if (tabIdToUnmute) {
             await audioController.unmuteTab(tabIdToUnmute, { smooth: false });
           }
+          this.lastClassification = {
+            classification: 'other',
+            confidence: 100,
+            shouldMute: false,
+            source: 'youtube_dom',
+            timestamp: new Date().toISOString(),
+            hostname: this.extractHostname(this.currentTabUrl),
+            siteCategory: 'youtube'
+          };
           sendResponse({ success: true });
           break;
         }
